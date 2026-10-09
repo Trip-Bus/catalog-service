@@ -205,7 +205,26 @@ Spring Boot 4.1. Lo que sí tiene parche nunca se agrega aquí: se corrige subie
 
 El análisis de Sonar solo corre en `develop` (push y PR con base `develop`, ver
 [Flujo de ramas y entornos](#flujo-de-ramas-y-entornos)) y si el repo tiene el secreto `SONAR_TOKEN`;
-en otro caso el CI hace `mvn verify` y deja un aviso. Escaneos locales con Docker:
+en otro caso el CI hace `mvn verify` y deja un aviso.
+
+### Secretos de Docker Hub en el CI (`DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`)
+
+Los runners de GitHub comparten IP y agotan el límite de descargas anónimas de Docker Hub
+(`toomanyrequests: You have reached your unauthenticated pull rate limit`), lo que rompe
+Testcontainers (`postgres:16-alpine`, Redis) y el build de la imagen (`maven`, `eclipse-temurin`).
+Con estos secretos los jobs `secretos`, `build-test` y `docker` inician sesión en Docker Hub antes de
+descargar nada y usan el límite de una cuenta autenticada. Gitleaks se descarga desde GHCR
+(`ghcr.io/gitleaks/gitleaks`), que no tiene ese límite.
+
+| Secreto | Valor |
+|---|---|
+| `DOCKERHUB_USERNAME` | Usuario de Docker Hub |
+| `DOCKERHUB_TOKEN` | Personal access token con permiso **Public Repo Read-only** (solo lectura; nunca la contraseña) |
+
+Son **opcionales pero recomendados**: si faltan, el CI descarga sin autenticar (como antes), deja un
+aviso y puede fallar por el límite. Se crean en Settings → Secrets and variables → Actions.
+
+Escaneos locales con Docker:
 
 ```bash
 docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.30.1 git /repo --redact
