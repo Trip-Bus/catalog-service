@@ -1,5 +1,6 @@
 package com.tripbus.catalog.client;
 
+import com.tripbus.catalog.config.RequestIdPropagationInterceptor;
 import com.tripbus.catalog.config.ServiceUrls;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,6 +34,7 @@ public class SeatInventoryClient {
         this.restClient = RestClient.builder()
                 .baseUrl(urls.seatInventoryUrl())
                 .requestFactory(factory)
+                .requestInterceptor(new RequestIdPropagationInterceptor())
                 .build();
     }
 
