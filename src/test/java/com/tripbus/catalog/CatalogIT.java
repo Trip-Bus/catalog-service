@@ -95,8 +95,10 @@ class CatalogIT {
             assertThat(Instant.parse(results.get(i).get("fechaSalida").asText()))
                     .isAfter(Instant.parse(results.get(i - 1).get("fechaSalida").asText()));
         }
-        // Seat Inventory no está disponible en esta prueba: la búsqueda igual responde.
+        // Seat Inventory no está disponible en esta prueba: la búsqueda igual responde, sin ese dato.
         assertThat(results.get(0).get("asientosDisponibles").isNull()).isTrue();
+        assertThat(results.get(0).get("agotado").isNull()).isTrue();
+        assertThat(results.get(0).get("disponibilidadConocida").asBoolean()).isFalse();
     }
 
     @Test

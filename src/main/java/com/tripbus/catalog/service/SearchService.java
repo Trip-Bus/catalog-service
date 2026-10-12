@@ -15,7 +15,9 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeSet;
+import java.util.UUID;
 
 @Service
 public class SearchService {
@@ -61,11 +63,21 @@ public class SearchService {
         Instant now = clock.instant();
         List<TripSearchResult> vigentes = base.stream().filter(r -> r.fechaSalida().isAfter(now)).toList();
 
-        Map<java.util.UUID, Integer> disponibilidad =
+        Optional<Map<UUID, Integer>> disponibilidad =
                 seatInventoryClient.availability(vigentes.stream().map(TripSearchResult::itineraryId).toList());
         return vigentes.stream()
-                .map(r -> r.withDisponibilidad(disponibilidad.get(r.itineraryId())).sinOfertaVencida(now))
+                .map(r -> conDisponibilidad(r, disponibilidad).sinOfertaVencida(now))
                 .toList();
+    }
+
+    /**
+     * Seat Inventory inicializa un itinerario la primera vez que alguien ocupa uno de sus asientos.
+     * Si respondió sin ese itinerario, todos sus asientos están libres. Si falló, no hay dato.
+     */
+    static TripSearchResult conDisponibilidad(TripSearchResult r, Optional<Map<UUID, Integer>> disponibilidad) {
+        return disponibilidad
+                .map(mapa -> r.withDisponibilidad(mapa.getOrDefault(r.itineraryId(), r.capacidad())))
+                .orElseGet(() -> r.withDisponibilidad(null));
     }
 
     @Transactional(readOnly = true)
@@ -108,6 +120,7 @@ public class SearchService {
                 i.getBus().getCapacidad(),
                 null,
                 null,
-                oferta);
+                oferta,
+                false);
     }
 }

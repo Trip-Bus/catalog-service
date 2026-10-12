@@ -13,6 +13,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -41,10 +42,13 @@ public class SeatInventoryClient {
     public record Availability(UUID itineraryId, int disponibles, int total) {
     }
 
-    /** Devuelve itineraryId -> asientos disponibles. Mapa vacío si Seat Inventory falla. */
-    public Map<UUID, Integer> availability(Collection<UUID> itineraryIds) {
+    /**
+     * Devuelve itineraryId -> asientos disponibles, u Optional vacío si Seat Inventory falla.
+     * Seat Inventory omite los itinerarios que aún no conoce: nadie ha ocupado sus asientos.
+     */
+    public Optional<Map<UUID, Integer>> availability(Collection<UUID> itineraryIds) {
         if (itineraryIds.isEmpty()) {
-            return Map.of();
+            return Optional.of(Map.of());
         }
         String ids = itineraryIds.stream().map(UUID::toString).collect(Collectors.joining(","));
         try {
@@ -57,10 +61,10 @@ public class SeatInventoryClient {
             if (result != null) {
                 result.forEach(a -> map.put(a.itineraryId(), a.disponibles()));
             }
-            return map;
+            return Optional.of(map);
         } catch (RuntimeException e) {
             log.warn("Seat Inventory no respondió la disponibilidad: {}", e.getMessage());
-            return Map.of();
+            return Optional.empty();
         }
     }
 }

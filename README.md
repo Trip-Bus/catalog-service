@@ -24,7 +24,18 @@ Responde las búsquedas del pasajero y es dueño de la carga inicial de datos (s
 
 **Publica:** `ItineraryPublished`, `ItineraryCancelled`. **Consume:** `OfferActivated`, `OfferClosed`, `OfferSoldOut`, `UserLoggedIn`.
 
-Cache de búsquedas en Redis (TTL 45 s). Si Seat Inventory no responde, la búsqueda sigue funcionando sin el dato de disponibilidad.
+Cache de búsquedas en Redis (TTL 45 s). La disponibilidad no se cachea: se consulta en vivo a Seat Inventory.
+
+Disponibilidad en cada resultado de `/trips/search` (US-008):
+
+| Caso | `asientosDisponibles` | `agotado` | `disponibilidadConocida` |
+|---|---|---|---|
+| Seat Inventory responde con el itinerario | el número que informa | `asientosDisponibles <= 0` | `true` |
+| Seat Inventory responde sin el itinerario (nadie ha ocupado asientos aún) | `capacidad` | `false` | `true` |
+| Seat Inventory no responde (timeouts 300/500 ms) | `null` | `null` | `false` |
+
+Seat Inventory inicializa un itinerario la primera vez que alguien retiene, vende o reserva para una
+oferta uno de sus asientos: si respondió sin ese itinerario, todos sus asientos están libres.
 
 ## Flujo de ramas y entornos
 
@@ -87,7 +98,7 @@ curl "http://localhost:18002/trips/search?origin=Bogotá&destination=Medellín&d
 ```
 
 Con este compose solo funcionan `/trips/search` y `/trips/cities` (públicos; sin seat-inventory la
-búsqueda responde sin el dato de asientos). `/admin/**` exige un JWT de identity: pruébalo con el
+búsqueda responde sin el dato de asientos, con `disponibilidadConocida: false`). `/admin/**` exige un JWT de identity: pruébalo con el
 compose general de **API-gateway**. El servicio llega a identity (18001) y seat-inventory (18003) de
 tu PC por `host.docker.internal`.
 
@@ -179,15 +190,15 @@ Toda la plataforma: ver el README de **API-gateway**.
 `mvn verify` falla si la cobertura total baja de los mínimos del `pom.xml`, en **todas** las ramas
 (también en `main`, donde Sonar no corre):
 
-| Métrica | Medido (2026-10-09) | Mínimo |
+| Métrica | Medido (2026-10-12) | Mínimo |
 |---|---|---|
-| Líneas | 71 % | `jacoco.minimo.lineas` = 0.70 |
-| Ramas | 55 % | `jacoco.minimo.ramas` = 0.55 |
+| Líneas | 73 % | `jacoco.minimo.lineas` = 0.70 |
+| Ramas | 60 % | `jacoco.minimo.ramas` = 0.60 |
 
 **La cobertura nunca puede bajar: si agregas pruebas, sube el mínimo.** Corre `mvn verify`, mira
 el total en `target/site/jacoco/index.html` (o la tabla del CI), redondéalo hacia abajo al 5 % y
-actualiza la propiedad en el pom en el mismo PR. Ramas está por debajo del 60 % de referencia:
-las mejores candidatas para subirla son `EventConsumer`, `CurrentUser` y `TripSearchResult`.
+actualiza la propiedad en el pom en el mismo PR. Las mejores candidatas para subir ramas son
+`EventConsumer` y `CurrentUser`.
 
 Fuera de la cobertura (mismas en `sonar.coverage.exclusions` y en los `<excludes>` de JaCoCo) solo
 está lo que no tiene lógica: `CatalogApplication`, los DTO sin métodos de `web/dto`, las entidades
