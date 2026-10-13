@@ -1,0 +1,16 @@
+# Perfil "prod": servidor de producción (activa también "desplegado").
+#
+# El seed (SEED_ON_STARTUP, por defecto true) queda ENCENDIDO también en PROD a propósito: en el MVP
+# no hay pantalla para crear rutas ni itinerarios, así que el seed es la única fuente del catálogo.
+# Es idempotente (solo crea lo que falta; reejecutarlo no duplica nada) y con varias réplicas solo
+# una lo ejecuta (LeaderLock en Redis).
+logging:
+  level:
+    com.tripbus: INFO
+
+# Swagger/OpenAPI apagado en producción (solo IDE y QA).
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

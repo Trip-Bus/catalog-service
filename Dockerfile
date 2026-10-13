@@ -12,8 +12,10 @@ RUN addgroup -S tripbus && adduser -S tripbus -G tripbus
 WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
 USER tripbus
-EXPOSE 16002
+ARG GIT_COMMIT=local
+ENV SERVER_PORT=18002 APP_COMMIT=${GIT_COMMIT}
+EXPOSE 18002
 ENV JAVA_OPTS="-XX:MaxRAMPercentage=75 -XX:+UseSerialGC"
 HEALTHCHECK --interval=10s --timeout=3s --start-period=120s --retries=6 \
-  CMD wget -qO- http://localhost:16002/actuator/health/readiness || exit 1
+  CMD wget -qO- http://localhost:${SERVER_PORT}/actuator/health/readiness || exit 1
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar app.jar"]
