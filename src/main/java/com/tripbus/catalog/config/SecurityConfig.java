@@ -29,8 +29,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(a -> a
                         .requestMatchers("/actuator/health/**", "/actuator/info", "/actuator/prometheus").permitAll()
                         .requestMatchers("/internal/**").hasRole(InternalTokenFilter.INTERNAL_ROLE)
-                        // Búsqueda y consulta del catálogo son públicas (se puede buscar sin cuenta).
-                        .requestMatchers(HttpMethod.GET, "/trips/search", "/trips/cities",
+                        // Búsqueda, viajes en ruta (seguimiento sin tiquete) y consulta del catálogo son públicas.
+                        .requestMatchers(HttpMethod.GET, "/trips/search", "/trips/cities", "/trips/in-progress",
                                 "/itineraries/**", "/routes/**").permitAll()
                         // Swagger (en prod springdoc está apagado y estas rutas dan 404) y página de error.
                         .requestMatchers(HttpMethod.GET, "/v3/api-docs/**", "/swagger-ui/**",

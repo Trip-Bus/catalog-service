@@ -7,7 +7,7 @@ Responde las búsquedas del pasajero y es dueño de la carga inicial de datos (s
 
 **Stack:** Java 21 · Spring Boot 3.5.16 · PostgreSQL 16 · Redis 7
 
-**HU:** HT-01, US-007, US-008, US-014 · **Puerto:** 18002 · **BD:** `tripbus_catalog` (puerto QA 18102)
+**HU:** HT-01, US-007, US-008, US-014, US-039, US-047 · **Puerto:** 18002 · **BD:** `tripbus_catalog` (puerto QA 18102)
 
 ## API
 
@@ -15,6 +15,7 @@ Responde las búsquedas del pasajero y es dueño de la carga inicial de datos (s
 |---|---|---|
 | GET | `/trips/search?origin=&destination=&date=YYYY-MM-DD` | Búsqueda (sin distinguir tildes), ordenada por salida, con asientos disponibles (consultados a Seat Inventory) y oferta activa. |
 | GET | `/trips/cities` | Ciudades disponibles. |
+| GET | `/trips/in-progress?origin=&destination=` | Viajes en ruta (público, US-039/US-047): para abrir el seguimiento del bus sin tiquete. Al menos uno de `origin`/`destination` (si no, 400 `INVALID_SEARCH`), sin distinguir tildes. Itinerarios no cancelados con `fechaSalida - 30 min <= ahora <= fechaLlegadaEstimada + 30 min` (`tripbus.catalog.in-progress-before`/`-after`, mismo criterio que la ventana de fleet), ordenados por salida, máximo 50. Devuelve `itineraryId`, `busId`, `empresa`, `origen`, `destino`, `fechaSalida`, `fechaLlegadaEstimada`; sin precio, asientos ni oferta, y sin cache. |
 | GET | `/itineraries/{id}` | Detalle con paradas y hora programada. |
 | GET | `/itineraries/{id}/seatmap` | Distribución real del bus (pisos, pasillo, baño, numeración). |
 | GET | `/itineraries/{id}/price` | Precio base + oferta activa. |
@@ -97,7 +98,7 @@ curl http://localhost:18002/actuator/health
 curl "http://localhost:18002/trips/search?origin=Bogotá&destination=Medellín&date=$(date -d tomorrow +%F)"
 ```
 
-Con este compose solo funcionan `/trips/search` y `/trips/cities` (públicos; sin seat-inventory la
+Con este compose solo funcionan `/trips/search`, `/trips/cities` y `/trips/in-progress` (públicos; sin seat-inventory la
 búsqueda responde sin el dato de asientos, con `disponibilidadConocida: false`). `/admin/**` exige un JWT de identity: pruébalo con el
 compose general de **API-gateway**. El servicio llega a identity (18001) y seat-inventory (18003) de
 tu PC por `host.docker.internal`.
@@ -172,7 +173,7 @@ mvn -B verify      # unitarias + integración con PostgreSQL y Redis reales (Tes
 
 - `*Test` / `*Tests`: unitarias.
 - `CatalogIT`: levanta PostgreSQL 16 y Redis 7 con Testcontainers, corre las migraciones Flyway
-  reales, ejecuta el seed y prueba búsqueda, mapa de asientos, ofertas y `/admin/seed`.
+  reales, ejecuta el seed y prueba búsqueda, viajes en ruta, mapa de asientos, ofertas y `/admin/seed`.
 
 Toda la plataforma: ver el README de **API-gateway**.
 
@@ -192,8 +193,8 @@ Toda la plataforma: ver el README de **API-gateway**.
 
 | Métrica | Medido (2026-10-12) | Mínimo |
 |---|---|---|
-| Líneas | 73 % | `jacoco.minimo.lineas` = 0.70 |
-| Ramas | 60 % | `jacoco.minimo.ramas` = 0.60 |
+| Líneas | 75 % | `jacoco.minimo.lineas` = 0.75 |
+| Ramas | 61 % | `jacoco.minimo.ramas` = 0.60 |
 
 **La cobertura nunca puede bajar: si agregas pruebas, sube el mínimo.** Corre `mvn verify`, mira
 el total en `target/site/jacoco/index.html` (o la tabla del CI), redondéalo hacia abajo al 5 % y

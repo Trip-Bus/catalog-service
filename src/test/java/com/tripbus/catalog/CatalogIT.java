@@ -3,7 +3,16 @@ package com.tripbus.catalog;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tripbus.catalog.common.events.EventEnvelope;
+import com.tripbus.catalog.domain.Bus;
+import com.tripbus.catalog.domain.BusType;
+import com.tripbus.catalog.domain.Company;
+import com.tripbus.catalog.domain.Itinerary;
+import com.tripbus.catalog.domain.Route;
 import com.tripbus.catalog.events.OfferEventsHandler;
+import com.tripbus.catalog.repository.BusRepository;
+import com.tripbus.catalog.repository.CompanyRepository;
+import com.tripbus.catalog.repository.ItineraryRepository;
+import com.tripbus.catalog.repository.RouteRepository;
 import com.tripbus.catalog.seed.SeedService;
 import com.tripbus.catalog.service.CatalogTime;
 import com.tripbus.catalog.web.dto.SeedResult;
@@ -24,10 +33,13 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -68,6 +80,15 @@ class CatalogIT {
     private TransactionTemplate tx;
     @Autowired
     private ObjectMapper objectMapper;
+    @Autowired
+    private CompanyRepository companyRepository;
+    @Autowired
+    private RouteRepository routeRepository;
+    @Autowired
+    private BusRepository busRepository;
+    @Autowired
+    private ItineraryRepository itineraryRepository;
+
     @BeforeAll
     void sembrar() {
         seedService.seed();
@@ -174,6 +195,68 @@ class CatalogIT {
                         .authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.itinerariosNuevos").value(0));
+    }
+
+    @Test
+    void viajesEnRutaSoloDevuelveLosQueEstanEnCursoYSinPrecioNiAsientos() throws Exception {
+        Instant now = Instant.now();
+        Company empresa = companyRepository.save(new Company(UUID.randomUUID(), "Rápido En Ruta", null));
+        Route ruta = routeRepository.save(new Route(UUID.randomUUID(), empresa, "Bogotá", "Tunja En Ruta", 180));
+        Itinerary enCurso = itinerario(ruta, now.minus(1, ChronoUnit.HOURS), now.plus(2, ChronoUnit.HOURS));
+        Itinerary porSalir = itinerario(ruta, now.plus(20, ChronoUnit.MINUTES), now.plus(3, ChronoUnit.HOURS));
+        Itinerary manana = itinerario(ruta, now.plus(1, ChronoUnit.DAYS), now.plus(1, ChronoUnit.DAYS).plus(3, ChronoUnit.HOURS));
+        Itinerary yaLlego = itinerario(ruta, now.minus(5, ChronoUnit.HOURS), now.minus(2, ChronoUnit.HOURS));
+        Itinerary cancelado = itinerario(ruta, now.minus(30, ChronoUnit.MINUTES), now.plus(2, ChronoUnit.HOURS));
+        cancelado.cancelar();
+        itineraryRepository.saveAll(List.of(enCurso, porSalir, manana, yaLlego, cancelado));
+
+        // Solo por destino (sin tilde ni mayúsculas): exactamente los dos de la ventana, ordenados por salida.
+        String body = mockMvc.perform(get("/trips/in-progress").param("destination", "TUNJA en ruta"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].itineraryId").value(enCurso.getId().toString()))
+                .andExpect(jsonPath("$[0].busId").value(enCurso.getBus().getId().toString()))
+                .andExpect(jsonPath("$[0].empresa").value("Rápido En Ruta"))
+                .andExpect(jsonPath("$[0].origen").value("Bogotá"))
+                .andExpect(jsonPath("$[0].destino").value("Tunja En Ruta"))
+                .andExpect(jsonPath("$[1].itineraryId").value(porSalir.getId().toString()))
+                .andReturn().getResponse().getContentAsString();
+        JsonNode primero = objectMapper.readTree(body).get(0);
+        assertThat(primero.has("fechaSalida")).isTrue();
+        assertThat(primero.has("fechaLlegadaEstimada")).isTrue();
+        assertThat(primero.has("precioBase")).isFalse();
+        assertThat(primero.has("asientosDisponibles")).isFalse();
+        assertThat(primero.has("ofertaActiva")).isFalse();
+
+        // "bogota" sin tilde, solo origen: aparece el viaje en curso y nunca los que están fuera de la ventana.
+        String porOrigen = mockMvc.perform(get("/trips/in-progress").param("origin", "bogota"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        List<String> ids = new ArrayList<>();
+        objectMapper.readTree(porOrigen).forEach(n -> ids.add(n.get("itineraryId").asText()));
+        assertThat(ids).contains(enCurso.getId().toString(), porSalir.getId().toString())
+                .doesNotContain(manana.getId().toString(), yaLlego.getId().toString(), cancelado.getId().toString());
+
+        // Origen y destino juntos.
+        mockMvc.perform(get("/trips/in-progress").param("origin", "BOGOTÁ").param("destination", "tunja en ruta"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2));
+    }
+
+    @Test
+    void viajesEnRutaSinOrigenNiDestinoEs400YEsPublico() throws Exception {
+        mockMvc.perform(get("/trips/in-progress"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_SEARCH"));
+        mockMvc.perform(get("/trips/in-progress").param("origin", "  ").param("destination", ""))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_SEARCH"));
+    }
+
+    private Itinerary itinerario(Route ruta, Instant salida, Instant llegada) {
+        String placa = "IT" + UUID.randomUUID().toString().substring(0, 6).toUpperCase();
+        Bus bus = busRepository.save(new Bus(UUID.randomUUID(), ruta.getCompany().getId(), placa, BusType.UN_PISO, 40));
+        return new Itinerary(UUID.randomUUID(), ruta, bus, salida, llegada, new BigDecimal("80000"));
     }
 
     private UUID primerItinerarioDeManana() throws Exception {
