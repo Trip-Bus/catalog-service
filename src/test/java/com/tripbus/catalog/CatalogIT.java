@@ -98,7 +98,9 @@ class CatalogIT {
     void elSeedEsIdempotente() {
         SeedResult segunda = seedService.seed();
         assertThat(segunda.itinerariosNuevos()).isZero();
-        assertThat(segunda.itinerariosExistentes()).isEqualTo(8 * 5 * 16);
+        // 7 ciudades conectadas entre sí en los dos sentidos = 42 rutas, 5 salidas diarias, 23 días (ayer a +21).
+        assertThat(segunda.rutas()).isEqualTo(7 * 6);
+        assertThat(segunda.itinerariosExistentes()).isEqualTo(7 * 6 * 5 * 23);
     }
 
     @Test
