@@ -80,5 +80,10 @@ tripbus:
     seat-inventory-url: ${SEAT_INVENTORY_URL:http://localhost:18003}
   search:
     cache-ttl-seconds: 45
+  catalog:
+    # GET /trips/in-progress: viajes con fechaSalida - before <= ahora <= fechaLlegadaEstimada + after.
+    # Mismo criterio que tracking-window-before/after de fleet-trip-events-service.
+    in-progress-before: 30m
+    in-progress-after: 30m
   seed:
     on-startup: ${SEED_ON_STARTUP:true}
