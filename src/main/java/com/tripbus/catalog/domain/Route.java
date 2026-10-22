@@ -49,11 +49,16 @@ public class Route {
     public Route(UUID id, Company company, String origen, String destino, int duracionMinutos) {
         this.id = id;
         this.company = company;
-        actualizar(origen, destino, duracionMinutos);
+        asignar(origen, destino, duracionMinutos);
     }
 
     /** Cambia origen/destino (con sus formas normalizadas para la búsqueda) y la duración. */
-    public final void actualizar(String origen, String destino, int duracionMinutos) {
+    public void actualizar(String origen, String destino, int duracionMinutos) {
+        asignar(origen, destino, duracionMinutos);
+    }
+
+    // Privado (no sobrescribible por el proxy de Hibernate) para poder usarlo desde el constructor.
+    private void asignar(String origen, String destino, int duracionMinutos) {
         this.origen = origen;
         this.destino = destino;
         this.origenNorm = TextNormalizer.normalize(origen);
