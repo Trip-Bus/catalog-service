@@ -30,6 +30,10 @@ public class SeatMap {
         this.distribucion = distribucion;
     }
 
+    public void cambiarDistribucion(String distribucion) {
+        this.distribucion = distribucion;
+    }
+
     public UUID getId() {
         return id;
     }

@@ -7,7 +7,7 @@ Responde las búsquedas del pasajero y es dueño de la carga inicial de datos (s
 
 **Stack:** Java 21 · Spring Boot 3.5.16 · PostgreSQL 16 · Redis 7
 
-**HU:** HT-01, US-007, US-008, US-014, US-039, US-047 · **Puerto:** 18002 · **BD:** `tripbus_catalog` (puerto QA 18102)
+**HU:** HT-01, US-007, US-008, US-014, US-039, US-047, US-100, US-110, US-111 · **Puerto:** 18002 · **BD:** `tripbus_catalog` (puerto QA 18102)
 
 ## API
 
@@ -22,8 +22,24 @@ Responde las búsquedas del pasajero y es dueño de la carga inicial de datos (s
 | GET | `/routes/{id}/stops` | Paradas de una ruta. |
 | POST | `/admin/seed` | Seed idempotente (ADMIN). También corre al arrancar y cada madrugada. |
 | POST | `/admin/itineraries/{id}/cancel` | Cancela un viaje (ADMIN/OPERADOR) → `ItineraryCancelled`. |
+| POST | `/companies` | Crea una empresa (ADMIN, US-100). Body `{nombre, nit}`: nombre obligatorio, NIT de 9-10 dígitos con dígito de verificación opcional (`900123456-7`). NIT único sin importar el dígito de verificación (409 `NIT_ALREADY_EXISTS`). Queda `ACTIVA` → `CompanyCreated`. |
+| GET | `/companies?estado=&page=&size=` | Empresas paginadas (ADMIN), filtro opcional `ACTIVA`/`INACTIVA`. `page` desde 0, `size` 1-100 (20 por defecto). Respuesta `{content, page, size, totalElements, totalPages}`. |
+| GET | `/companies/{id}` | Detalle (ADMIN): `id`, `nombre`, `nit`, `estado`, `creadoEn`, `actualizadoEn`. 404 `COMPANY_NOT_FOUND`. |
+| PUT | `/companies/{id}` | Edita nombre y NIT (ADMIN) → `CompanyUpdated`. |
+| PATCH | `/companies/{id}/estado` | Body `{estado: ACTIVA\|INACTIVA}` (ADMIN). `INACTIVA` → `CompanyDeactivated`: sus viajes dejan de salir en `/trips/search` y `/trips/in-progress` y no puede crear buses (409 `COMPANY_INACTIVE`). Reactivar → `CompanyUpdated`. Invalida la cache de búsquedas. |
+| GET | `/internal/companies/{id}` | Servicio a servicio (`X-Internal-Token`): `{id, nombre, estado}`. Lo usa identity para validar el `companyId` de un operador. |
+| POST | `/buses` | Crea un bus (ADMIN/OPERADOR, US-110). Body `{placa, tipo, companyId?, distribucion?}`: placa `ABC123` única (409 `PLACA_ALREADY_EXISTS`), `tipo` `UN_PISO`/`DOS_PISOS`. El OPERADOR crea en la empresa de su token; el ADMIN debe enviar `companyId` (400 `COMPANY_REQUIRED`). Sin `distribucion` usa el mapa por defecto del tipo. Queda `ACTIVO`. |
+| GET | `/buses?estado=&tipo=&companyId=&page=&size=` | Buses paginados (ADMIN/OPERADOR). El OPERADOR solo ve los de su empresa; `companyId` solo aplica al ADMIN. |
+| GET | `/buses/{id}` | Detalle: `id`, `companyId`, `placa`, `tipo`, `capacidad`, `estado`, `creadoEn`, `actualizadoEn`. Un bus de otra empresa es 404 `BUS_NOT_FOUND` para el OPERADOR. |
+| PUT | `/buses/{id}` | Edita placa y tipo. Cambiar el tipo reinicia el mapa al de por defecto del nuevo tipo (409 `BUS_IN_USE` si tiene viajes futuros no cancelados). |
+| PATCH | `/buses/{id}/estado` | Body `{estado: ACTIVO\|INACTIVO\|MANTENIMIENTO}`. |
+| GET | `/buses/{id}/seatmap` | Mapa de asientos del bus (US-111), mismo JSON que `distribucion` en `/itineraries/{id}/seatmap`: `{tipo, capacidad, pisos: [{piso, filas, columnas, celdas: [{fila, columna, tipo, asiento?}]}]}`. Tipos de celda: `ASIENTO`, `PASILLO`, `BANO`, `CONDUCTOR`, `ESCALERA`, `PUERTA`, `VACIO`. |
+| PUT | `/buses/{id}/seatmap` | Reemplaza el mapa (mismo JSON). Al menos 1 asiento, números únicos, solo las celdas `ASIENTO` llevan número, 1 piso para `UN_PISO` y 2 para `DOS_PISOS` (máximo 2), celdas dentro de `filas`/`columnas` y sin repetir posición; si no, 400 `INVALID_SEATMAP`. La capacidad del bus se recalcula como el número de asientos. 409 `BUS_IN_USE` si el bus tiene viajes futuros no cancelados (el cambio de bus en un viaje llega en el Sprint 3). |
 
-**Publica:** `ItineraryPublished`, `ItineraryCancelled`. **Consume:** `OfferActivated`, `OfferClosed`, `OfferSoldOut`, `UserLoggedIn`.
+Los endpoints de buses responden 403 a un OPERADOR sin `companyId` en el token. Las empresas y buses del
+seed quedan `ACTIVA`/`ACTIVO`.
+
+**Publica:** `ItineraryPublished`, `ItineraryCancelled`, `CompanyCreated`, `CompanyUpdated`, `CompanyDeactivated` (payload `{companyId, nombre, nit, estado}`). **Consume:** `OfferActivated`, `OfferClosed`, `OfferSoldOut`, `UserLoggedIn`.
 
 Cache de búsquedas en Redis (TTL 45 s). La disponibilidad no se cachea: se consulta en vivo a Seat Inventory.
 
@@ -174,6 +190,8 @@ mvn -B verify      # unitarias + integración con PostgreSQL y Redis reales (Tes
 - `*Test` / `*Tests`: unitarias.
 - `CatalogIT`: levanta PostgreSQL 16 y Redis 7 con Testcontainers, corre las migraciones Flyway
   reales, ejecuta el seed y prueba búsqueda, viajes en ruta, mapa de asientos, ofertas y `/admin/seed`.
+- `EmpresasBusesIT`: igual (Testcontainers), prueba empresas, buses, mapa de asientos por bus, el efecto
+  de inactivar una empresa en la búsqueda (con cache) y en viajes en ruta, y `/internal/companies/{id}`.
 
 Toda la plataforma: ver el README de **API-gateway**.
 
@@ -191,10 +209,10 @@ Toda la plataforma: ver el README de **API-gateway**.
 `mvn verify` falla si la cobertura total baja de los mínimos del `pom.xml`, en **todas** las ramas
 (también en `main`, donde Sonar no corre):
 
-| Métrica | Medido (2026-10-12) | Mínimo |
+| Métrica | Medido (2026-10-21) | Mínimo |
 |---|---|---|
-| Líneas | 75 % | `jacoco.minimo.lineas` = 0.75 |
-| Ramas | 61 % | `jacoco.minimo.ramas` = 0.60 |
+| Líneas | 84,9 % | `jacoco.minimo.lineas` = 0.80 |
+| Ramas | 79,4 % | `jacoco.minimo.ramas` = 0.75 |
 
 **La cobertura nunca puede bajar: si agregas pruebas, sube el mínimo.** Corre `mvn verify`, mira
 el total en `target/site/jacoco/index.html` (o la tabla del CI), redondéalo hacia abajo al 5 % y
