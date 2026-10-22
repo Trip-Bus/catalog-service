@@ -214,6 +214,8 @@ mvn -B verify      # unitarias + integración con PostgreSQL y Redis reales (Tes
 - `RutasViajesIT`: igual (Testcontainers), prueba rutas y paradas, programación de viajes (uno y recurrente),
   el payload de `ItineraryPublished`, cruces con alistamiento, 20 solicitudes simultáneas para el mismo bus
   (solo 1 se crea), la restricción `EXCLUDE` de la base y que el seed no genere cruces.
+- `EventConsumerIT`: Redis 7 propio (Testcontainers); consumo con consumer group y ack, idempotencia
+  por `eventId`, 3 reintentos, evento mal formado y que el grupo se vuelva a crear si desaparece.
 - `MigracionSinCrucesIT`: PostgreSQL propio; aplica hasta V4, carga viajes cruzados como los del seed viejo
   y verifica que V5 los reparte en el bus alterno antes de crear la restricción.
 
@@ -230,18 +232,23 @@ Toda la plataforma: ver el README de **API-gateway**.
 
 ### Cobertura mínima (JaCoCo)
 
-`mvn verify` falla si la cobertura total baja de los mínimos del `pom.xml`, en **todas** las ramas
-(también en `main`, donde Sonar no corre):
+`mvn verify` falla, en **todas** las ramas (también en `main`, donde Sonar no corre), si:
+
+- la cobertura **total** baja de los mínimos del `pom.xml`, o
+- **cualquier clase** (fuera de las exclusiones de abajo) queda por debajo del **80 %** de líneas o de
+  ramas (`jacoco.minimo.clase`; una clase sin ramas solo se evalúa en líneas). El mensaje de
+  `jacoco:check` dice qué clase y qué contador incumple.
 
 | Métrica | Medido (2026-10-22) | Mínimo |
 |---|---|---|
-| Líneas | 89,8 % | `jacoco.minimo.lineas` = 0.85 |
-| Ramas | 83,5 % | `jacoco.minimo.ramas` = 0.80 |
+| Líneas (total) | 98,9 % | `jacoco.minimo.lineas` = 0.95 |
+| Ramas (total) | 94,7 % | `jacoco.minimo.ramas` = 0.90 |
+| Líneas y ramas de cada clase | la más baja: 93,3 % líneas / 83,3 % ramas | `jacoco.minimo.clase` = 0.80 |
 
 **La cobertura nunca puede bajar: si agregas pruebas, sube el mínimo.** Corre `mvn verify`, mira
 el total en `target/site/jacoco/index.html` (o la tabla del CI), redondéalo hacia abajo al 5 % y
-actualiza la propiedad en el pom en el mismo PR. Las mejores candidatas para subir ramas son
-`EventConsumer` y `CurrentUser`.
+actualiza la propiedad en el pom en el mismo PR. Una clase nueva debe llegar con sus pruebas: si
+queda bajo el 80 %, el build falla.
 
 Fuera de la cobertura (mismas en `sonar.coverage.exclusions` y en los `<excludes>` de JaCoCo) solo
 está lo que no tiene lógica: `CatalogApplication`, los DTO sin métodos de `web/dto`, las entidades

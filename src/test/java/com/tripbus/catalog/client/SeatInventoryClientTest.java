@@ -38,6 +38,13 @@ class SeatInventoryClientTest {
     }
 
     @Test
+    void respuestaVaciaEsUnMapaVacio() throws IOException {
+        SeatInventoryClient client = clientContra(200, "");
+
+        assertThat(client.availability(List.of(UUID.randomUUID()))).contains(Map.of());
+    }
+
+    @Test
     void errorDeSeatInventoryDevuelveOptionalVacio() throws IOException {
         SeatInventoryClient client = clientContra(500, "{}");
 
