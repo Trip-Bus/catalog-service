@@ -45,7 +45,7 @@ import java.util.UUID;
 /**
  * HT-01: carga idempotente de datos base. Todos los IDs son deterministas (UUID v3 a partir
  * de una llave lógica), así que ejecutar el seed N veces nunca duplica datos: solo agrega
- * los itinerarios de los días nuevos de la ventana [ayer, hoy + 14 días].
+ * los itinerarios de los días nuevos de la ventana [ayer, hoy + 21 días].
  */
 @Service
 public class SeedService {

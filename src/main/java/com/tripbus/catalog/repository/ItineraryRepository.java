@@ -12,13 +12,14 @@ import java.util.UUID;
 
 public interface ItineraryRepository extends JpaRepository<Itinerary, UUID> {
 
-    /** Búsqueda principal (US-007): ordenada por hora de salida. */
+    /** Búsqueda principal (US-007): ordenada por hora de salida. Solo empresas ACTIVA (US-100). */
     @Query("""
             select i from Itinerary i
               join fetch i.route r
-              join fetch r.company
+              join fetch r.company c
               join fetch i.bus
             where r.origenNorm = :origen
+              and c.estado = com.tripbus.catalog.domain.CompanyStatus.ACTIVA
               and r.destinoNorm = :destino
               and i.estado = com.tripbus.catalog.domain.ItineraryStatus.PROGRAMADO
               and i.fechaSalida >= :desde
@@ -33,14 +34,15 @@ public interface ItineraryRepository extends JpaRepository<Itinerary, UUID> {
 
     /**
      * Viajes en ruta (US-039/US-047). origen/destino ya normalizados; vacío = sin filtro (al menos
-     * uno viene lleno). Ordenados por hora de salida.
+     * uno viene lleno). Ordenados por hora de salida. Solo empresas ACTIVA (US-100).
      */
     @Query("""
             select i from Itinerary i
               join fetch i.route r
-              join fetch r.company
+              join fetch r.company c
               join fetch i.bus
             where (:origen = '' or r.origenNorm = :origen)
+              and c.estado = com.tripbus.catalog.domain.CompanyStatus.ACTIVA
               and (:destino = '' or r.destinoNorm = :destino)
               and i.estado <> com.tripbus.catalog.domain.ItineraryStatus.CANCELADO
               and i.fechaSalida <= :saleAntesDe
@@ -64,4 +66,13 @@ public interface ItineraryRepository extends JpaRepository<Itinerary, UUID> {
     java.util.Optional<Itinerary> findDetailed(@Param("id") UUID id);
 
     List<Itinerary> findByOfertaId(UUID ofertaId);
+
+    /** US-111: el bus tiene viajes que aún no salen y no están cancelados (BUS_IN_USE). */
+    @Query("""
+            select count(i) > 0 from Itinerary i
+            where i.bus.id = :busId
+              and i.estado <> com.tripbus.catalog.domain.ItineraryStatus.CANCELADO
+              and i.fechaSalida > :ahora
+            """)
+    boolean existsFutureForBus(@Param("busId") UUID busId, @Param("ahora") Instant ahora);
 }

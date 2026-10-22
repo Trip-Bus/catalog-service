@@ -7,6 +7,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
+import java.time.Instant;
 import java.util.UUID;
 
 @Entity
@@ -29,6 +30,16 @@ public class Bus {
     @Column(nullable = false)
     private int capacidad;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private BusStatus estado = BusStatus.ACTIVO;
+
+    @Column(name = "creado_en", nullable = false)
+    private Instant creadoEn = Instant.now();
+
+    @Column(name = "actualizado_en", nullable = false)
+    private Instant actualizadoEn = creadoEn;
+
     protected Bus() {
     }
 
@@ -38,6 +49,22 @@ public class Bus {
         this.placa = placa;
         this.tipo = tipo;
         this.capacidad = capacidad;
+    }
+
+    public void actualizar(String placa, BusType tipo, Instant ahora) {
+        this.placa = placa;
+        this.tipo = tipo;
+        this.actualizadoEn = ahora;
+    }
+
+    public void cambiarCapacidad(int capacidad, Instant ahora) {
+        this.capacidad = capacidad;
+        this.actualizadoEn = ahora;
+    }
+
+    public void cambiarEstado(BusStatus estado, Instant ahora) {
+        this.estado = estado;
+        this.actualizadoEn = ahora;
     }
 
     public UUID getId() {
@@ -58,5 +85,17 @@ public class Bus {
 
     public int getCapacidad() {
         return capacidad;
+    }
+
+    public BusStatus getEstado() {
+        return estado;
+    }
+
+    public Instant getCreadoEn() {
+        return creadoEn;
+    }
+
+    public Instant getActualizadoEn() {
+        return actualizadoEn;
     }
 }
