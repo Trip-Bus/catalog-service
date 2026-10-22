@@ -99,14 +99,35 @@ public class CompanyService {
         return new CompanyInternalResponse(company.getId(), company.getNombre(), company.getEstado().name());
     }
 
-    /** Empresa existente y ACTIVA (para crear buses). */
+    /** Empresa existente y ACTIVA (para crear buses o rutas). */
     @Transactional(readOnly = true)
     public Company requireActive(UUID id) {
         Company company = find(id);
-        if (!company.isActiva()) {
-            throw ApiException.conflict("COMPANY_INACTIVE", "La empresa está inactiva y no puede crear buses");
-        }
+        requireActive(company);
         return company;
+    }
+
+    public static void requireActive(Company company) {
+        if (!company.isActiva()) {
+            throw ApiException.conflict("COMPANY_INACTIVE", "La empresa está inactiva");
+        }
+    }
+
+    /**
+     * Empresa de un recurso nuevo: la del token para el OPERADOR (no puede pedir otra, 403); el ADMIN
+     * (companyScope null) debe indicarla (400 COMPANY_REQUIRED).
+     */
+    public static UUID resolveCompany(UUID solicitada, UUID companyScope) {
+        if (companyScope == null) {
+            if (solicitada == null) {
+                throw ApiException.badRequest("COMPANY_REQUIRED", "El administrador debe indicar companyId");
+            }
+            return solicitada;
+        }
+        if (solicitada != null && !solicitada.equals(companyScope)) {
+            throw ApiException.forbidden("FORBIDDEN", "Solo puede gestionar recursos de su propia empresa");
+        }
+        return companyScope;
     }
 
     private Company find(UUID id) {

@@ -7,7 +7,7 @@ Responde las búsquedas del pasajero y es dueño de la carga inicial de datos (s
 
 **Stack:** Java 21 · Spring Boot 3.5.16 · PostgreSQL 16 · Redis 7
 
-**HU:** HT-01, US-007, US-008, US-014, US-039, US-047, US-100, US-110, US-111 · **Puerto:** 18002 · **BD:** `tripbus_catalog` (puerto QA 18102)
+**HU:** HT-01, US-007, US-008, US-014, US-039, US-047, US-100, US-110, US-111, US-114, US-116, US-117 · **Puerto:** 18002 · **BD:** `tripbus_catalog` (puerto QA 18102)
 
 ## API
 
@@ -19,7 +19,7 @@ Responde las búsquedas del pasajero y es dueño de la carga inicial de datos (s
 | GET | `/itineraries/{id}` | Detalle con paradas y hora programada. |
 | GET | `/itineraries/{id}/seatmap` | Distribución real del bus (pisos, pasillo, baño, numeración). |
 | GET | `/itineraries/{id}/price` | Precio base + oferta activa. |
-| GET | `/routes/{id}/stops` | Paradas de una ruta. |
+| GET | `/routes/{id}/stops` | Paradas de una ruta (público, lo usa fleet). |
 | POST | `/admin/seed` | Seed idempotente (ADMIN). También corre al arrancar y cada madrugada. |
 | POST | `/admin/itineraries/{id}/cancel` | Cancela un viaje (ADMIN/OPERADOR) → `ItineraryCancelled`. |
 | POST | `/companies` | Crea una empresa (ADMIN, US-100). Body `{nombre, nit}`: nombre obligatorio, NIT de 9-10 dígitos con dígito de verificación opcional (`900123456-7`). NIT único sin importar el dígito de verificación (409 `NIT_ALREADY_EXISTS`). Queda `ACTIVA` → `CompanyCreated`. |
@@ -36,10 +36,29 @@ Responde las búsquedas del pasajero y es dueño de la carga inicial de datos (s
 | GET | `/buses/{id}/seatmap` | Mapa de asientos del bus (US-111), mismo JSON que `distribucion` en `/itineraries/{id}/seatmap`: `{tipo, capacidad, pisos: [{piso, filas, columnas, celdas: [{fila, columna, tipo, asiento?}]}]}`. Tipos de celda: `ASIENTO`, `PASILLO`, `BANO`, `CONDUCTOR`, `ESCALERA`, `PUERTA`, `VACIO`. |
 | PUT | `/buses/{id}/seatmap` | Reemplaza el mapa (mismo JSON). Al menos 1 asiento, números únicos, solo las celdas `ASIENTO` llevan número, 1 piso para `UN_PISO` y 2 para `DOS_PISOS` (máximo 2), celdas dentro de `filas`/`columnas` y sin repetir posición; si no, 400 `INVALID_SEATMAP`. La capacidad del bus se recalcula como el número de asientos. 409 `BUS_IN_USE` si el bus tiene viajes futuros no cancelados (el cambio de bus en un viaje llega en el Sprint 3). |
 
-Los endpoints de buses responden 403 a un OPERADOR sin `companyId` en el token. Las empresas y buses del
-seed quedan `ACTIVA`/`ACTIVO`.
+| POST | `/routes` | Crea una ruta con sus paradas (ADMIN/OPERADOR, US-114). Body `{companyId?, origen, destino, paradas: [{orden, nombre, lat, lng, minutosDesdeSalida}]}`. Reglas (400 `INVALID_ROUTE` con `details` por campo, p. ej. `paradas[2].lat`): origen ≠ destino; mínimo 2 paradas; la primera es el origen y la última el destino; `orden` consecutivo desde 1; `minutosDesdeSalida` empieza en 0 y crece estrictamente; lat −4.3 a 13.5 y lng −79.1 a −66.8 (Colombia). `duracionMinutos` = minutos de la última parada. El OPERADOR crea en su empresa; el ADMIN envía `companyId`. Empresa `INACTIVA` → 409 `COMPANY_INACTIVE`. → `RouteCreated`. |
+| GET | `/routes?estado=&origen=&destino=&companyId=&page=&size=` | Rutas paginadas (ADMIN/OPERADOR), sin paradas. `origen`/`destino` sin distinguir tildes. El OPERADOR solo ve las de su empresa. |
+| GET | `/routes/{id}` | Detalle con paradas. Una ruta de otra empresa es 404 `ROUTE_NOT_FOUND`. |
+| PUT | `/routes/{id}` | Reemplaza origen, destino y paradas (mismas reglas). → `RouteUpdated`. |
+| PUT | `/routes/{id}/stops` | Reemplaza la lista completa de paradas (array, mismas reglas con el origen y destino de la ruta). → `RouteUpdated`. Si la ruta tiene viajes futuros no cancelados y algo cambia: 409 `ROUTE_IN_USE`. |
+| PATCH | `/routes/{id}/estado` | Body `{estado: ACTIVA\|INACTIVA}`. → `RouteUpdated`. Una ruta `INACTIVA` no recibe viajes nuevos. |
+| POST | `/itineraries` | Programa un viaje (ADMIN/OPERADOR, US-116). Body `{routeId, busId, fechaSalida, precioBase}`; `fechaLlegadaEstimada` = salida + duración de la ruta. Errores: 400 `INVALID_PRICE` (precio ≤ 0), `DEPARTURE_IN_PAST`, `COMPANY_MISMATCH` (ruta y bus de empresas distintas), `VALIDATION_ERROR`; 404 `ROUTE_NOT_FOUND`/`BUS_NOT_FOUND` (también si son de otra empresa); 409 `COMPANY_INACTIVE`, `ROUTE_INACTIVE`, `BUS_NOT_ACTIVE`, `BUS_SCHEDULE_CONFLICT` (US-117, `details.itineraryId` = viaje con el que choca). → `ItineraryPublished`; invalida la cache de búsquedas. |
+| POST | `/itineraries/schedule` | Programación recurrente. Body `{routeId, busId, horaSalida: "06:00", diasSemana: [LUNES..DOMINGO], desde, hasta, precioBase}`: un viaje por cada fecha de `[desde, hasta]` cuyo día esté en `diasSemana`, en hora de Colombia. Máximo 90 días y 200 viajes (400 `INVALID_SCHEDULE`). Responde `{creados: [...], omitidos: [{fecha, fechaSalida, codigo, motivo, conflictoCon?}]}`: una fecha pasada (`DEPARTURE_IN_PAST`) o con cruce (`BUS_SCHEDULE_CONFLICT`) se omite sin hacer fallar las demás. |
+| GET | `/itineraries?desde=&hasta=&routeId=&busId=&estado=&companyId=&page=&size=` | Viajes de la empresa (ADMIN/OPERADOR), paginados y ordenados por salida. `desde`/`hasta` son fechas (hora de Colombia, inclusivas). `GET /itineraries/{id}` sigue público. |
 
-**Publica:** `ItineraryPublished`, `ItineraryCancelled`, `CompanyCreated`, `CompanyUpdated`, `CompanyDeactivated` (payload `{companyId, nombre, nit, estado}`). **Consume:** `OfferActivated`, `OfferClosed`, `OfferSoldOut`, `UserLoggedIn`.
+Los endpoints de buses, rutas y programación responden 403 a un OPERADOR sin `companyId` en el token. Las
+empresas y buses del seed quedan `ACTIVA`/`ACTIVO`.
+
+**Un bus no puede estar en dos viajes que se cruzan (US-117).** Dos viajes no cancelados del mismo bus no
+pueden solaparse en `[salida, llegada + alistamiento]` (`tripbus.catalog.bus-turnaround`, 30 min por defecto).
+Al programar se bloquea la fila del bus (`SELECT ... FOR UPDATE`) antes de revisar el cruce, así que dos
+solicitudes simultáneas nunca crean viajes cruzados. Además la base tiene la restricción
+`ex_itineraries_bus_sin_cruce` (`EXCLUDE USING gist`, extensión `btree_gist`) que impide cualquier cruce real.
+En el seed, las rutas que con el alistamiento no caben en 24 h (p. ej. Cartagena–Villavicencio, 25 h 30 min)
+usan un bus alterno los días impares (placa `U…`); la migración V5 movió a ese mismo bus los viajes viejos que
+se cruzaban.
+
+**Publica:** `ItineraryPublished` (payload `{itineraryId, routeId, busId, companyId, origen, destino, fechaSalida, fechaLlegada, precioBase, tipoBus, capacidad, seatNumbers}`; `seatNumbers` y `capacidad` salen del mapa de asientos real del bus), `ItineraryCancelled`, `CompanyCreated`, `CompanyUpdated`, `CompanyDeactivated` (payload `{companyId, nombre, nit, estado}`), `RouteCreated`, `RouteUpdated` (payload `{routeId, companyId, origen, destino, duracionMinutos, estado, paradas: [{orden, nombre, lat, lng, minutosDesdeSalida}]}`; nadie los consume todavía, fleet los usará en el Sprint 3). **Consume:** `OfferActivated`, `OfferClosed`, `OfferSoldOut`, `UserLoggedIn`.
 
 Cache de búsquedas en Redis (TTL 45 s). La disponibilidad no se cachea: se consulta en vivo a Seat Inventory.
 
@@ -192,6 +211,11 @@ mvn -B verify      # unitarias + integración con PostgreSQL y Redis reales (Tes
   reales, ejecuta el seed y prueba búsqueda, viajes en ruta, mapa de asientos, ofertas y `/admin/seed`.
 - `EmpresasBusesIT`: igual (Testcontainers), prueba empresas, buses, mapa de asientos por bus, el efecto
   de inactivar una empresa en la búsqueda (con cache) y en viajes en ruta, y `/internal/companies/{id}`.
+- `RutasViajesIT`: igual (Testcontainers), prueba rutas y paradas, programación de viajes (uno y recurrente),
+  el payload de `ItineraryPublished`, cruces con alistamiento, 20 solicitudes simultáneas para el mismo bus
+  (solo 1 se crea), la restricción `EXCLUDE` de la base y que el seed no genere cruces.
+- `MigracionSinCrucesIT`: PostgreSQL propio; aplica hasta V4, carga viajes cruzados como los del seed viejo
+  y verifica que V5 los reparte en el bus alterno antes de crear la restricción.
 
 Toda la plataforma: ver el README de **API-gateway**.
 
@@ -209,10 +233,10 @@ Toda la plataforma: ver el README de **API-gateway**.
 `mvn verify` falla si la cobertura total baja de los mínimos del `pom.xml`, en **todas** las ramas
 (también en `main`, donde Sonar no corre):
 
-| Métrica | Medido (2026-10-21) | Mínimo |
+| Métrica | Medido (2026-10-22) | Mínimo |
 |---|---|---|
-| Líneas | 84,9 % | `jacoco.minimo.lineas` = 0.80 |
-| Ramas | 79,4 % | `jacoco.minimo.ramas` = 0.75 |
+| Líneas | 89,8 % | `jacoco.minimo.lineas` = 0.85 |
+| Ramas | 83,5 % | `jacoco.minimo.ramas` = 0.80 |
 
 **La cobertura nunca puede bajar: si agregas pruebas, sube el mínimo.** Corre `mvn verify`, mira
 el total en `target/site/jacoco/index.html` (o la tabla del CI), redondéalo hacia abajo al 5 % y

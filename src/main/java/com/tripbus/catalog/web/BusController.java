@@ -1,7 +1,6 @@
 package com.tripbus.catalog.web;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.tripbus.catalog.common.error.ApiException;
 import com.tripbus.catalog.common.security.CurrentUser;
 import com.tripbus.catalog.domain.BusStatus;
 import com.tripbus.catalog.domain.BusType;
@@ -52,7 +51,7 @@ public class BusController {
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("hasAnyRole('ADMIN', 'OPERADOR')")
     public BusResponse create(@Valid @RequestBody BusRequest request, Authentication auth) {
-        return busService.create(request, companyScope(auth));
+        return busService.create(request, CurrentUser.companyScope(auth));
     }
 
     @Operation(summary = "Listar buses (ADMIN/OPERADOR)",
@@ -66,13 +65,13 @@ public class BusController {
             @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
             Authentication auth) {
-        return busService.list(estado, tipo, companyId, page, size, companyScope(auth));
+        return busService.list(estado, tipo, companyId, page, size, CurrentUser.companyScope(auth));
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN', 'OPERADOR')")
     public BusResponse get(@PathVariable UUID id, Authentication auth) {
-        return busService.get(id, companyScope(auth));
+        return busService.get(id, CurrentUser.companyScope(auth));
     }
 
     @Operation(summary = "Editar placa y tipo (ADMIN/OPERADOR)",
@@ -80,14 +79,14 @@ public class BusController {
     @PutMapping("/{id}")
     @PreAuthorize("hasAnyRole('ADMIN', 'OPERADOR')")
     public BusResponse update(@PathVariable UUID id, @Valid @RequestBody BusUpdateRequest request, Authentication auth) {
-        return busService.update(id, request, companyScope(auth));
+        return busService.update(id, request, CurrentUser.companyScope(auth));
     }
 
     @PatchMapping("/{id}/estado")
     @PreAuthorize("hasAnyRole('ADMIN', 'OPERADOR')")
     public BusResponse changeStatus(@PathVariable UUID id, @Valid @RequestBody BusStatusRequest request,
                                     Authentication auth) {
-        return busService.changeStatus(id, request.estado(), companyScope(auth));
+        return busService.changeStatus(id, request.estado(), CurrentUser.companyScope(auth));
     }
 
     @Operation(summary = "Mapa de asientos del bus (ADMIN/OPERADOR)",
@@ -95,7 +94,7 @@ public class BusController {
     @GetMapping("/{id}/seatmap")
     @PreAuthorize("hasAnyRole('ADMIN', 'OPERADOR')")
     public JsonNode seatMap(@PathVariable UUID id, Authentication auth) {
-        return busService.seatMap(id, companyScope(auth));
+        return busService.seatMap(id, CurrentUser.companyScope(auth));
     }
 
     @Operation(summary = "Reemplazar el mapa de asientos (ADMIN/OPERADOR)",
@@ -104,18 +103,6 @@ public class BusController {
     @PutMapping("/{id}/seatmap")
     @PreAuthorize("hasAnyRole('ADMIN', 'OPERADOR')")
     public JsonNode updateSeatMap(@PathVariable UUID id, @RequestBody JsonNode distribucion, Authentication auth) {
-        return busService.updateSeatMap(id, distribucion, companyScope(auth));
-    }
-
-    /** null para el ADMIN (todas las empresas); la empresa del token para el OPERADOR. */
-    static UUID companyScope(Authentication auth) {
-        if (CurrentUser.hasRole(auth, "ADMIN")) {
-            return null;
-        }
-        UUID companyId = CurrentUser.companyId(auth);
-        if (companyId == null) {
-            throw ApiException.forbidden("FORBIDDEN", "El operador no tiene una empresa asignada");
-        }
-        return companyId;
+        return busService.updateSeatMap(id, distribucion, CurrentUser.companyScope(auth));
     }
 }

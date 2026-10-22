@@ -61,7 +61,7 @@ public class BusService {
 
     @Transactional
     public BusResponse create(BusRequest request, UUID companyScope) {
-        UUID companyId = empresaDelBusNuevo(request.companyId(), companyScope);
+        UUID companyId = CompanyService.resolveCompany(request.companyId(), companyScope);
         companyService.requireActive(companyId);
         UUID id = UUID.randomUUID();
         String placa = placa(request.placa());
@@ -160,19 +160,6 @@ public class BusService {
         return busRepository.findById(id)
                 .filter(b -> companyScope == null || companyScope.equals(b.getCompanyId()))
                 .orElseThrow(() -> ApiException.notFound("BUS_NOT_FOUND", "El bus no existe"));
-    }
-
-    private static UUID empresaDelBusNuevo(UUID solicitada, UUID companyScope) {
-        if (companyScope == null) {
-            if (solicitada == null) {
-                throw ApiException.badRequest("COMPANY_REQUIRED", "El administrador debe indicar companyId");
-            }
-            return solicitada;
-        }
-        if (solicitada != null && !solicitada.equals(companyScope)) {
-            throw ApiException.forbidden("FORBIDDEN", "Solo puede crear buses de su propia empresa");
-        }
-        return companyScope;
     }
 
     private void validarPlacaLibre(String placa, UUID id) {
