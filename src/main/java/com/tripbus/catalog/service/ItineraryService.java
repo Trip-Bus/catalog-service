@@ -23,7 +23,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -93,12 +92,7 @@ public class ItineraryService {
         SeatMap seatMap = seatMapRepository.findByBusId(i.getBus().getId())
                 .orElseThrow(() -> ApiException.notFound("SEAT_MAP_NOT_FOUND", "El bus no tiene mapa de asientos"));
         JsonNode distribucion = readJson(seatMap.getDistribucion());
-        List<String> asientos = new ArrayList<>();
-        distribucion.path("pisos").forEach(piso -> piso.path("celdas").forEach(celda -> {
-            if (celda.hasNonNull("asiento")) {
-                asientos.add(celda.get("asiento").asText());
-            }
-        }));
+        List<String> asientos = ItineraryPublisher.seatNumbers(distribucion);
         return new SeatMapResponse(i.getId(), i.getBus().getId(), i.getBus().getPlaca(), i.getBus().getTipo().name(),
                 i.getBus().getCapacidad(), asientos, distribucion);
     }

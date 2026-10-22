@@ -4,7 +4,10 @@ import com.tripbus.catalog.domain.BusType;
 
 import java.math.BigDecimal;
 import java.text.Normalizer;
+import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -59,6 +62,21 @@ final class SeedData {
     /** Días generados: desde ayer (para tener viajes en curso) hasta DIAS_ADELANTE. */
     static final int DIAS_ATRAS = 1;
     static final int DIAS_ADELANTE = 21; // el selector de fecha del front llega a 20 días
+
+    /** Referencia para alternar buses en días pares/impares (la misma que usa la migración V5). */
+    private static final LocalDate DIA_CERO = LocalDate.of(2000, 1, 1);
+
+    /**
+     * US-117: el bus de un horario sale todos los días a la misma hora. Si la ruta más el alistamiento no
+     * cabe en 24 h, los días impares necesitan otro bus.
+     */
+    static boolean necesitaBusAlterno(RouteSeed ruta, Duration alistamiento) {
+        return Duration.ofMinutes(ruta.duracionMinutos()).plus(alistamiento).compareTo(Duration.ofDays(1)) > 0;
+    }
+
+    static boolean esDiaImpar(LocalDate fecha) {
+        return Math.floorMod(ChronoUnit.DAYS.between(DIA_CERO, fecha), 2) == 1;
+    }
 
     static final List<CompanySeed> EMPRESAS = List.of(
             new CompanySeed("andino", "Expreso Andino", "900100001-1"),

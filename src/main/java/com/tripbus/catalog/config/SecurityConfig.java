@@ -29,9 +29,12 @@ public class SecurityConfig {
                 .authorizeHttpRequests(a -> a
                         .requestMatchers("/actuator/health/**", "/actuator/info", "/actuator/prometheus").permitAll()
                         .requestMatchers("/internal/**").hasRole(InternalTokenFilter.INTERNAL_ROLE)
-                        // Búsqueda, viajes en ruta (seguimiento sin tiquete) y consulta del catálogo son públicas.
+                        // Búsqueda, viajes en ruta (seguimiento sin tiquete) y consulta de un viaje son públicas,
+                        // igual que las paradas de una ruta (las usa fleet). GET /itineraries y /routes (listados
+                        // de la empresa, US-114/US-116) exigen token.
                         .requestMatchers(HttpMethod.GET, "/trips/search", "/trips/cities", "/trips/in-progress",
-                                "/itineraries/**", "/routes/**").permitAll()
+                                "/itineraries/*", "/itineraries/*/seatmap", "/itineraries/*/price",
+                                "/routes/*/stops").permitAll()
                         // Swagger (en prod springdoc está apagado y estas rutas dan 404) y página de error.
                         .requestMatchers(HttpMethod.GET, "/v3/api-docs/**", "/swagger-ui/**",
                                 "/swagger-ui.html").permitAll()

@@ -3,6 +3,8 @@ package com.tripbus.catalog.domain;
 import com.tripbus.catalog.service.TextNormalizer;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
@@ -37,8 +39,9 @@ public class Route {
     @Column(name = "duracion_minutos", nullable = false)
     private int duracionMinutos;
 
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private String estado = "ACTIVA";
+    private RouteStatus estado = RouteStatus.ACTIVA;
 
     protected Route() {
     }
@@ -46,11 +49,25 @@ public class Route {
     public Route(UUID id, Company company, String origen, String destino, int duracionMinutos) {
         this.id = id;
         this.company = company;
+        asignar(origen, destino, duracionMinutos);
+    }
+
+    /** Cambia origen/destino (con sus formas normalizadas para la búsqueda) y la duración. */
+    public void actualizar(String origen, String destino, int duracionMinutos) {
+        asignar(origen, destino, duracionMinutos);
+    }
+
+    // Privado (no sobrescribible por el proxy de Hibernate) para poder usarlo desde el constructor.
+    private void asignar(String origen, String destino, int duracionMinutos) {
         this.origen = origen;
         this.destino = destino;
         this.origenNorm = TextNormalizer.normalize(origen);
         this.destinoNorm = TextNormalizer.normalize(destino);
         this.duracionMinutos = duracionMinutos;
+    }
+
+    public void cambiarEstado(RouteStatus estado) {
+        this.estado = estado;
     }
 
     public UUID getId() {
@@ -73,7 +90,7 @@ public class Route {
         return duracionMinutos;
     }
 
-    public String getEstado() {
+    public RouteStatus getEstado() {
         return estado;
     }
 }

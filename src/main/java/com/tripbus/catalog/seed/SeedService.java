@@ -2,7 +2,6 @@ package com.tripbus.catalog.seed;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.tripbus.catalog.common.events.EventPublisher;
 import com.tripbus.catalog.domain.Bus;
 import com.tripbus.catalog.domain.BusType;
 import com.tripbus.catalog.domain.Company;
@@ -10,7 +9,6 @@ import com.tripbus.catalog.domain.Itinerary;
 import com.tripbus.catalog.domain.Route;
 import com.tripbus.catalog.domain.SeatMap;
 import com.tripbus.catalog.domain.Stop;
-import com.tripbus.catalog.events.CatalogEvents;
 import com.tripbus.catalog.repository.BusRepository;
 import com.tripbus.catalog.repository.CompanyRepository;
 import com.tripbus.catalog.repository.ItineraryRepository;
@@ -18,11 +16,13 @@ import com.tripbus.catalog.repository.RouteRepository;
 import com.tripbus.catalog.repository.SeatMapRepository;
 import com.tripbus.catalog.repository.StopRepository;
 import com.tripbus.catalog.service.CatalogTime;
+import com.tripbus.catalog.service.ItineraryPublisher;
 import com.tripbus.catalog.service.SearchCache;
 import com.tripbus.catalog.service.SeatLayoutFactory;
 import com.tripbus.catalog.web.dto.SeedResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,6 +30,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -58,10 +59,11 @@ public class SeedService {
     private final BusRepository busRepository;
     private final SeatMapRepository seatMapRepository;
     private final ItineraryRepository itineraryRepository;
-    private final EventPublisher eventPublisher;
+    private final ItineraryPublisher itineraryPublisher;
     private final SearchCache searchCache;
     private final ObjectMapper objectMapper;
     private final Clock clock;
+    private final Duration busTurnaround;
 
     public SeedService(
             CompanyRepository companyRepository,
@@ -70,17 +72,19 @@ public class SeedService {
             BusRepository busRepository,
             SeatMapRepository seatMapRepository,
             ItineraryRepository itineraryRepository,
-            EventPublisher eventPublisher,
+            ItineraryPublisher itineraryPublisher,
             SearchCache searchCache,
             ObjectMapper objectMapper,
-            Clock clock) {
+            Clock clock,
+            @Value("${tripbus.catalog.bus-turnaround:30m}") Duration busTurnaround) {
+        this.busTurnaround = busTurnaround;
         this.companyRepository = companyRepository;
         this.routeRepository = routeRepository;
         this.stopRepository = stopRepository;
         this.busRepository = busRepository;
         this.seatMapRepository = seatMapRepository;
         this.itineraryRepository = itineraryRepository;
-        this.eventPublisher = eventPublisher;
+        this.itineraryPublisher = itineraryPublisher;
         this.searchCache = searchCache;
         this.objectMapper = objectMapper;
         this.clock = clock;
@@ -100,7 +104,7 @@ public class SeedService {
             companies.put(c.key(), company);
         }
 
-        int busesCreados = 0;
+        List<Bus> creados = new ArrayList<>();
         List<Itinerary> nuevos = new ArrayList<>();
         int existentes = 0;
         LocalDate hoy = LocalDate.now(clock.withZone(CatalogTime.ZONE));
@@ -120,32 +124,34 @@ public class SeedService {
                 return created;
             });
 
-            // Un bus fijo por (ruta, horario).
+            // Un bus fijo por (ruta, horario). US-117: si la ruta (más el alistamiento) no cabe en 24 h, el bus
+            // no alcanza a volver a salir al día siguiente: los días impares van en un bus alterno (V5 movió
+            // a ese mismo bus los viajes que ya existían).
+            boolean conAlterno = SeedData.necesitaBusAlterno(rs, busTurnaround);
             List<Bus> busesRuta = new ArrayList<>();
+            List<Bus> alternos = new ArrayList<>();
             for (int slot = 0; slot < SeedData.SALIDAS.size(); slot++) {
                 UUID busId = id("bus:" + rs.key() + ":" + slot);
                 String placa = String.format("T%s%03d", rs.key().substring(0, 2).toUpperCase(), r * 10 + slot);
-                BusType tipo = rs.tipoBus();
-                Bus bus = busRepository.findById(busId).orElse(null);
-                if (bus == null) {
-                    bus = busRepository.save(new Bus(busId, company.getId(), placa, tipo, SeatLayoutFactory.capacidad(tipo)));
-                    seatMapRepository.save(new SeatMap(id("seatmap:" + busId), busId, toJson(SeatLayoutFactory.layout(tipo))));
-                    busesCreados++;
-                }
+                Bus bus = busDelSeed(busId, company, placa, rs.tipoBus(), creados);
                 busesRuta.add(bus);
+                alternos.add(conAlterno
+                        ? busDelSeed(busAlterno(busId), company, "U" + placa.substring(1), rs.tipoBus(), creados)
+                        : bus);
             }
 
             Set<UUID> candidatos = new HashSet<>();
             Map<UUID, Itinerary> porCrear = new LinkedHashMap<>();
             for (int d = -SeedData.DIAS_ATRAS; d <= SeedData.DIAS_ADELANTE; d++) {
                 LocalDate fecha = hoy.plusDays(d);
+                List<Bus> busesDelDia = SeedData.esDiaImpar(fecha) ? alternos : busesRuta;
                 for (int slot = 0; slot < SeedData.SALIDAS.size(); slot++) {
                     LocalTime hora = SeedData.SALIDAS.get(slot);
                     UUID itineraryId = id("itinerary:" + rs.key() + ":" + fecha + ":" + slot);
                     candidatos.add(itineraryId);
                     Instant salida = fecha.atTime(hora).atZone(CatalogTime.ZONE).toInstant();
                     Instant llegada = salida.plusSeconds(rs.duracionMinutos() * 60L);
-                    porCrear.put(itineraryId, new Itinerary(itineraryId, route, busesRuta.get(slot), salida, llegada,
+                    porCrear.put(itineraryId, new Itinerary(itineraryId, route, busesDelDia.get(slot), salida, llegada,
                             precio(rs.precioBase(), hora)));
                 }
             }
@@ -160,32 +166,26 @@ public class SeedService {
         }
 
         itineraryRepository.saveAll(nuevos);
-        for (Itinerary i : nuevos) {
-            eventPublisher.publishAfterCommit(CatalogEvents.ITINERARY_PUBLISHED, publishedPayload(i));
-        }
+        itineraryPublisher.publishAfterCommit(nuevos);
         if (!nuevos.isEmpty()) {
             searchCache.evictAll();
         }
         log.info("Seed ejecutado: {} itinerarios nuevos, {} ya existían", nuevos.size(), existentes);
-        return new SeedResult(companies.size(), SeedData.RUTAS.size(), busesCreados, nuevos.size(), existentes);
+        return new SeedResult(companies.size(), SeedData.RUTAS.size(), creados.size(), nuevos.size(), existentes);
     }
 
-    /** Payload de ItineraryPublished (incluye los asientos para que Seat Inventory los cree). */
-    public static Map<String, Object> publishedPayload(Itinerary i) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("itineraryId", i.getId());
-        payload.put("routeId", i.getRoute().getId());
-        payload.put("busId", i.getBus().getId());
-        payload.put("companyId", i.getRoute().getCompany().getId());
-        payload.put("origen", i.getRoute().getOrigen());
-        payload.put("destino", i.getRoute().getDestino());
-        payload.put("fechaSalida", i.getFechaSalida());
-        payload.put("fechaLlegada", i.getFechaLlegadaEstimada());
-        payload.put("precioBase", i.getPrecioBase());
-        payload.put("tipoBus", i.getBus().getTipo().name());
-        payload.put("capacidad", i.getBus().getCapacidad());
-        payload.put("seatNumbers", SeatLayoutFactory.seatNumbers(i.getBus().getTipo()));
-        return payload;
+    /** Id del bus que cubre los días impares de una ruta larga (la migración V5 calcula el mismo). */
+    public static UUID busAlterno(UUID busId) {
+        return id("bus-alterno:" + busId);
+    }
+
+    private Bus busDelSeed(UUID busId, Company company, String placa, BusType tipo, List<Bus> creados) {
+        return busRepository.findById(busId).orElseGet(() -> {
+            Bus bus = busRepository.save(new Bus(busId, company.getId(), placa, tipo, SeatLayoutFactory.capacidad(tipo)));
+            seatMapRepository.save(new SeatMap(id("seatmap:" + busId), busId, toJson(SeatLayoutFactory.layout(tipo))));
+            creados.add(bus);
+            return bus;
+        });
     }
 
     /** Salidas nocturnas (22:00) con 10% de descuento sobre la tarifa base. */

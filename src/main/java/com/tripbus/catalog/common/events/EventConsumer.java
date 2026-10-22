@@ -97,13 +97,23 @@ public class EventConsumer implements SmartLifecycle {
     }
 
     private void onPollError(Throwable t) {
-        String message = String.valueOf(t.getMessage());
-        if (message.contains("NOGROUP")) {
+        // Lettuce envuelve el error de Redis ("Error in execution" -> "NOGROUP ..."): se busca en las causas.
+        if (mentions(t, "NOGROUP")) {
             ensureGroup();
         } else {
-            log.warn("Error leyendo el stream de eventos: {}", message);
+            log.warn("Error leyendo el stream de eventos: {}", t.getMessage());
             sleepQuietly(1000);
         }
+    }
+
+    /** true si el mensaje de la excepción o de alguna de sus causas contiene el texto. */
+    static boolean mentions(Throwable t, String text) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            if (String.valueOf(c.getMessage()).contains(text)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void ensureGroup() {
@@ -113,8 +123,7 @@ public class EventConsumer implements SmartLifecycle {
                     connection.streamCommands().xGroupCreate(key, properties.group(), ReadOffset.from("0-0"), true));
             log.info("Consumer group '{}' creado en {}", properties.group(), properties.stream());
         } catch (Exception e) {
-            if (!String.valueOf(e.getMessage()).contains("BUSYGROUP")
-                    && !(e.getCause() != null && String.valueOf(e.getCause().getMessage()).contains("BUSYGROUP"))) {
+            if (!mentions(e, "BUSYGROUP")) {
                 log.warn("No se pudo crear el consumer group '{}': {}", properties.group(), e.getMessage());
             }
         }
