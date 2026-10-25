@@ -2,7 +2,6 @@ package com.tripbus.catalog.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tripbus.catalog.common.error.ApiException;
-import com.tripbus.catalog.common.events.EventPublisher;
 import com.tripbus.catalog.domain.Bus;
 import com.tripbus.catalog.domain.BusType;
 import com.tripbus.catalog.domain.Company;
@@ -10,7 +9,6 @@ import com.tripbus.catalog.domain.Itinerary;
 import com.tripbus.catalog.domain.Route;
 import com.tripbus.catalog.domain.SeatMap;
 import com.tripbus.catalog.domain.Stop;
-import com.tripbus.catalog.events.CatalogEvents;
 import com.tripbus.catalog.repository.ItineraryRepository;
 import com.tripbus.catalog.repository.RouteRepository;
 import com.tripbus.catalog.repository.SeatMapRepository;
@@ -30,13 +28,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** Consulta pública de un viaje (detalle, mapa, precio, paradas) y cancelación. */
+/** Consulta pública de un viaje: detalle, mapa, precio y paradas (la cancelación está en ItineraryChangeService). */
 class ItineraryServiceTest {
 
     private static final Instant AHORA = Instant.parse("2026-10-21T15:00:00Z");
@@ -45,10 +40,8 @@ class ItineraryServiceTest {
     private final RouteRepository routes = mock(RouteRepository.class);
     private final StopRepository stops = mock(StopRepository.class);
     private final SeatMapRepository seatMaps = mock(SeatMapRepository.class);
-    private final EventPublisher publisher = mock(EventPublisher.class);
-    private final SearchCache cache = mock(SearchCache.class);
-    private final ItineraryService service = new ItineraryService(itineraries, routes, stops, seatMaps, publisher,
-            cache, new ObjectMapper(), Clock.fixed(AHORA, ZoneOffset.UTC));
+    private final ItineraryService service = new ItineraryService(itineraries, routes, stops, seatMaps,
+            new ObjectMapper(), Clock.fixed(AHORA, ZoneOffset.UTC));
 
     private Itinerary viaje;
 
@@ -118,17 +111,6 @@ class ItineraryServiceTest {
         assertThatThrownBy(() -> service.stops(otra))
                 .isInstanceOf(ApiException.class)
                 .extracting(e -> ((ApiException) e).getCode()).isEqualTo("ROUTE_NOT_FOUND");
-    }
-
-    @Test
-    void cancelarPublicaElEventoYNoSePuedeCancelarDosVeces() {
-        assertThat(service.cancel(viaje.getId(), "Daño mecánico").estado()).isEqualTo("CANCELADO");
-        verify(publisher).publishAfterCommit(eq(CatalogEvents.ITINERARY_CANCELLED), any());
-        verify(cache).evictAll();
-
-        assertThatThrownBy(() -> service.cancel(viaje.getId(), "otra vez"))
-                .isInstanceOf(ApiException.class)
-                .extracting(e -> ((ApiException) e).getCode()).isEqualTo("ITINERARY_ALREADY_CANCELLED");
     }
 
     @Test

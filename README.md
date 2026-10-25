@@ -7,7 +7,7 @@ Responde las búsquedas del pasajero y es dueño de la carga inicial de datos (s
 
 **Stack:** Java 21 · Spring Boot 3.5.16 · PostgreSQL 16 · Redis 7
 
-**HU:** HT-01, US-007, US-008, US-014, US-039, US-047, US-100, US-110, US-111, US-114, US-116, US-117 · **Puerto:** 18002 · **BD:** `tripbus_catalog` (puerto QA 18102)
+**HU:** HT-01, US-007, US-008, US-014, US-039, US-047, US-100, US-110, US-111, US-114, US-116, US-117, US-118, US-119 · **Puerto:** 18002 · **BD:** `tripbus_catalog` (puerto QA 18102)
 
 ## API
 
@@ -21,7 +21,7 @@ Responde las búsquedas del pasajero y es dueño de la carga inicial de datos (s
 | GET | `/itineraries/{id}/price` | Precio base + oferta activa. |
 | GET | `/routes/{id}/stops` | Paradas de una ruta (público, lo usa fleet). |
 | POST | `/admin/seed` | Seed idempotente (ADMIN). También corre al arrancar y cada madrugada. |
-| POST | `/admin/itineraries/{id}/cancel` | Cancela un viaje (ADMIN/OPERADOR) → `ItineraryCancelled`. |
+| POST | `/admin/itineraries/{id}/cancel` | Cancela un viaje (ADMIN/OPERADOR). Body `{motivo}`. El OPERADOR solo cancela viajes de su empresa (otra empresa → 404 `ITINERARY_NOT_FOUND`). 409 `ITINERARY_ALREADY_CANCELLED` o `ITINERARY_FINISHED` (ya llegó). Guarda el historial (`CANCELACION`) → `ItineraryCancelled`. |
 | POST | `/companies` | Crea una empresa (ADMIN, US-100). Body `{nombre, nit}`: nombre obligatorio, NIT de 9-10 dígitos con dígito de verificación opcional (`900123456-7`). NIT único sin importar el dígito de verificación (409 `NIT_ALREADY_EXISTS`). Queda `ACTIVA` → `CompanyCreated`. |
 | GET | `/companies?estado=&page=&size=` | Empresas paginadas (ADMIN), filtro opcional `ACTIVA`/`INACTIVA`. `page` desde 0, `size` 1-100 (20 por defecto). Respuesta `{content, page, size, totalElements, totalPages}`. |
 | GET | `/companies/{id}` | Detalle (ADMIN): `id`, `nombre`, `nit`, `estado`, `creadoEn`, `actualizadoEn`. 404 `COMPANY_NOT_FOUND`. |
@@ -45,6 +45,9 @@ Responde las búsquedas del pasajero y es dueño de la carga inicial de datos (s
 | POST | `/itineraries` | Programa un viaje (ADMIN/OPERADOR, US-116). Body `{routeId, busId, fechaSalida, precioBase}`; `fechaLlegadaEstimada` = salida + duración de la ruta. Errores: 400 `INVALID_PRICE` (precio ≤ 0), `DEPARTURE_IN_PAST`, `COMPANY_MISMATCH` (ruta y bus de empresas distintas), `VALIDATION_ERROR`; 404 `ROUTE_NOT_FOUND`/`BUS_NOT_FOUND` (también si son de otra empresa); 409 `COMPANY_INACTIVE`, `ROUTE_INACTIVE`, `BUS_NOT_ACTIVE`, `BUS_SCHEDULE_CONFLICT` (US-117, `details.itineraryId` = viaje con el que choca). → `ItineraryPublished`; invalida la cache de búsquedas. |
 | POST | `/itineraries/schedule` | Programación recurrente. Body `{routeId, busId, horaSalida: "06:00", diasSemana: [LUNES..DOMINGO], desde, hasta, precioBase}`: un viaje por cada fecha de `[desde, hasta]` cuyo día esté en `diasSemana`, en hora de Colombia. Máximo 90 días y 200 viajes (400 `INVALID_SCHEDULE`). Responde `{creados: [...], omitidos: [{fecha, fechaSalida, codigo, motivo, conflictoCon?}]}`: una fecha pasada (`DEPARTURE_IN_PAST`) o con cruce (`BUS_SCHEDULE_CONFLICT`) se omite sin hacer fallar las demás. |
 | GET | `/itineraries?desde=&hasta=&routeId=&busId=&estado=&companyId=&page=&size=` | Viajes de la empresa (ADMIN/OPERADOR), paginados y ordenados por salida. `desde`/`hasta` son fechas (hora de Colombia, inclusivas). `GET /itineraries/{id}` sigue público. |
+| PATCH | `/itineraries/{id}/departure` | Reprograma o retrasa un viaje (ADMIN/OPERADOR de su empresa, US-118). Body `{nuevaFechaSalida, motivo}`; la llegada se recalcula con la duración de la ruta. Solo antes de la salida original (409 `ITINERARY_ALREADY_DEPARTED`) y si no está cancelado (409 `ITINERARY_CANCELLED`); la nueva salida en el futuro (400 `DEPARTURE_IN_PAST`) y distinta de la actual (400 `SAME_DEPARTURE`). El tipo lo calcula el servicio: `RETRASO` si se corre hacia adelante hasta `tripbus.catalog.max-delay` (6 h por defecto), `REPROGRAMACION` si es más o si se adelanta. Revalida US-117 en el mismo bus sin contar el propio viaje (409 `BUS_SCHEDULE_CONFLICT`). Otra empresa → 404. → `ItineraryRescheduled`; invalida la cache de búsquedas. |
+| PATCH | `/itineraries/{id}/bus` | Cambia el bus de un viaje no cancelado ni terminado (ADMIN/OPERADOR de su empresa, US-119). Body `{busId, motivo}`: bus de la misma empresa (si no, 404 `BUS_NOT_FOUND` para el OPERADOR o 400 `COMPANY_MISMATCH` para el ADMIN), `ACTIVO` (409 `BUS_NOT_ACTIVE`), distinto del actual (400 `SAME_BUS`) y sin cruces (409 `BUS_SCHEDULE_CONFLICT`). Bloquea las filas de los dos buses en orden de id. Antes de guardar llama a Seat Inventory `POST /internal/itineraries/{id}/remap {seatNumbers, capacidad}` (asientos del mapa real del bus nuevo, con `X-Internal-Token`): su 409 → 409 `SEATS_CONFLICT` con `details.asientos` (asientos vendidos o retenidos que no existen en el bus nuevo); sin respuesta o cualquier otra respuesta que no sea 2xx → 503 `SEAT_INVENTORY_UNAVAILABLE`. En ambos casos no cambia nada. Si el remap salió bien pero la transacción de Catalog falla, vuelve a llamar al remap con los asientos del bus anterior y deja un `ERROR` en el log. → `ItineraryBusChanged`. `/itineraries/{id}/seatmap` pasa a mostrar el mapa del bus nuevo. |
+| GET | `/itineraries/{id}/changes` | Historial del viaje (ADMIN/OPERADOR de su empresa): `[{id, tipo: RETRASO\|REPROGRAMACION\|CAMBIO_BUS\|CANCELACION, salidaAnterior, salidaNueva, busAnterior, busNuevo, motivo, hechoPor, creadoEn}]`, del más viejo al más nuevo. |
 
 Los endpoints de buses, rutas y programación responden 403 a un OPERADOR sin `companyId` en el token. Las
 empresas y buses del seed quedan `ACTIVA`/`ACTIVO`.
@@ -58,7 +61,7 @@ En el seed, las rutas que con el alistamiento no caben en 24 h (p. ej. Cartagena
 usan un bus alterno los días impares (placa `U…`); la migración V5 movió a ese mismo bus los viajes viejos que
 se cruzaban.
 
-**Publica:** `ItineraryPublished` (payload `{itineraryId, routeId, busId, companyId, origen, destino, fechaSalida, fechaLlegada, precioBase, tipoBus, capacidad, seatNumbers}`; `seatNumbers` y `capacidad` salen del mapa de asientos real del bus), `ItineraryCancelled`, `CompanyCreated`, `CompanyUpdated`, `CompanyDeactivated` (payload `{companyId, nombre, nit, estado}`), `RouteCreated`, `RouteUpdated` (payload `{routeId, companyId, origen, destino, duracionMinutos, estado, paradas: [{orden, nombre, lat, lng, minutosDesdeSalida}]}`; nadie los consume todavía, fleet los usará en el Sprint 3). **Consume:** `OfferActivated`, `OfferClosed`, `OfferSoldOut`, `UserLoggedIn`.
+**Publica:** `ItineraryPublished` (payload `{itineraryId, routeId, busId, companyId, origen, destino, fechaSalida, fechaLlegada, precioBase, tipoBus, capacidad, seatNumbers}`; `seatNumbers` y `capacidad` salen del mapa de asientos real del bus), `ItineraryCancelled` (payload `{itineraryId, companyId, routeId, fechaSalida, motivo}`; lo consume booking), `ItineraryRescheduled` (payload `{itineraryId, companyId, routeId, busId, fechaSalidaAnterior, fechaSalida, fechaLlegada, minutosDiferencia, tipo, motivo}`; `minutosDiferencia` es negativo si se adelantó), `ItineraryBusChanged` (payload `{itineraryId, companyId, busAnterior, busNuevo, capacidad, seatNumbers}`), `CompanyCreated`, `CompanyUpdated`, `CompanyDeactivated` (payload `{companyId, nombre, nit, estado}`), `RouteCreated`, `RouteUpdated` (payload `{routeId, companyId, origen, destino, duracionMinutos, estado, paradas: [{orden, nombre, lat, lng, minutosDesdeSalida}]}`; nadie los consume todavía, fleet los usará en el Sprint 3). **Consume:** `OfferActivated`, `OfferClosed`, `OfferSoldOut`, `UserLoggedIn`.
 
 Cache de búsquedas en Redis (TTL 45 s). La disponibilidad no se cachea: se consulta en vivo a Seat Inventory.
 
@@ -216,6 +219,9 @@ mvn -B verify      # unitarias + integración con PostgreSQL y Redis reales (Tes
   (solo 1 se crea), la restricción `EXCLUDE` de la base y que el seed no genere cruces.
 - `EventConsumerIT`: Redis 7 propio (Testcontainers); consumo con consumer group y ack, idempotencia
   por `eventId`, 3 reintentos, evento mal formado y que el grupo se vuelva a crear si desaparece.
+- `CambiosDeViajeIT`: igual (Testcontainers) con Seat Inventory simulado con WireMock; prueba retraso contra
+  reprogramación según el umbral, reprogramación con y sin cruce, cambio de bus (remap, conflicto de
+  asientos, Seat Inventory caído y compensación), la cancelación corregida y el historial.
 - `MigracionSinCrucesIT`: PostgreSQL propio; aplica hasta V4, carga viajes cruzados como los del seed viejo
   y verifica que V5 los reparte en el bus alterno antes de crear la restricción.
 
@@ -239,10 +245,10 @@ Toda la plataforma: ver el README de **API-gateway**.
   ramas (`jacoco.minimo.clase`; una clase sin ramas solo se evalúa en líneas). El mensaje de
   `jacoco:check` dice qué clase y qué contador incumple.
 
-| Métrica | Medido (2026-10-22) | Mínimo |
+| Métrica | Medido (2026-10-24) | Mínimo |
 |---|---|---|
-| Líneas (total) | 98,9 % | `jacoco.minimo.lineas` = 0.95 |
-| Ramas (total) | 94,7 % | `jacoco.minimo.ramas` = 0.90 |
+| Líneas (total) | 99,0 % | `jacoco.minimo.lineas` = 0.95 |
+| Ramas (total) | 95,1 % | `jacoco.minimo.ramas` = 0.95 |
 | Líneas y ramas de cada clase | la más baja: 93,3 % líneas / 83,3 % ramas | `jacoco.minimo.clase` = 0.80 |
 
 **La cobertura nunca puede bajar: si agregas pruebas, sube el mínimo.** Corre `mvn verify`, mira

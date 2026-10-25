@@ -1,6 +1,7 @@
 package com.tripbus.catalog.repository;
 
 import com.tripbus.catalog.domain.Itinerary;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -8,11 +9,13 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface ItineraryRepository extends JpaRepository<Itinerary, UUID>, JpaSpecificationExecutor<Itinerary> {
@@ -68,7 +71,7 @@ public interface ItineraryRepository extends JpaRepository<Itinerary, UUID>, Jpa
               join fetch i.bus
             where i.id = :id
             """)
-    java.util.Optional<Itinerary> findDetailed(@Param("id") UUID id);
+    Optional<Itinerary> findDetailed(@Param("id") UUID id);
 
     List<Itinerary> findByOfertaId(UUID ofertaId);
 
@@ -107,6 +110,32 @@ public interface ItineraryRepository extends JpaRepository<Itinerary, UUID>, Jpa
             @Param("desde") Instant desde,
             @Param("hasta") Instant hasta,
             Limit limit);
+
+    /** US-118/US-119: igual que findOverlapping pero sin contar el propio viaje. */
+    @Query("""
+            select i.id from Itinerary i
+            where i.bus.id = :busId
+              and i.id <> :excluir
+              and i.estado <> com.tripbus.catalog.domain.ItineraryStatus.CANCELADO
+              and i.fechaSalida < :hasta
+              and i.fechaLlegadaEstimada > :desde
+            order by i.fechaSalida asc
+            """)
+    List<UUID> findOverlappingExcept(
+            @Param("busId") UUID busId,
+            @Param("desde") Instant desde,
+            @Param("hasta") Instant hasta,
+            @Param("excluir") UUID excluir,
+            Limit limit);
+
+    /**
+     * SELECT ... FOR UPDATE solo sobre la fila del viaje (sin joins, para no bloquear también su bus): los
+     * cambios de un mismo viaje (reprogramar, cambiar bus, cancelar) se serializan. Siempre se toma antes
+     * que el bloqueo de los buses, así que no hay ciclos con la programación de viajes.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select i from Itinerary i where i.id = :id")
+    Optional<Itinerary> findByIdForUpdate(@Param("id") UUID id);
 
     /** GET /itineraries (US-116): página con ruta, empresa y bus en la misma consulta. */
     @Override

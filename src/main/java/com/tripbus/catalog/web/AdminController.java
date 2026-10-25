@@ -1,12 +1,15 @@
 package com.tripbus.catalog.web;
 
+import com.tripbus.catalog.common.security.CurrentUser;
 import com.tripbus.catalog.seed.SeedService;
-import com.tripbus.catalog.service.ItineraryService;
+import com.tripbus.catalog.service.ItineraryChangeService;
 import com.tripbus.catalog.web.dto.CancelRequest;
 import com.tripbus.catalog.web.dto.ItineraryDetail;
 import com.tripbus.catalog.web.dto.SeedResult;
+import io.swagger.v3.oas.annotations.Operation;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -20,11 +23,11 @@ import java.util.UUID;
 public class AdminController {
 
     private final SeedService seedService;
-    private final ItineraryService itineraryService;
+    private final ItineraryChangeService changeService;
 
-    public AdminController(SeedService seedService, ItineraryService itineraryService) {
+    public AdminController(SeedService seedService, ItineraryChangeService changeService) {
         this.seedService = seedService;
-        this.itineraryService = itineraryService;
+        this.changeService = changeService;
     }
 
     /** HT-01: carga idempotente de datos de demostración. Solo administradores. */
@@ -34,9 +37,13 @@ public class AdminController {
         return seedService.seed();
     }
 
+    @Operation(summary = "Cancelar un viaje (ADMIN/OPERADOR)",
+            description = "El OPERADOR solo cancela viajes de su empresa (otra empresa es 404). 409 "
+                    + "ITINERARY_ALREADY_CANCELLED o ITINERARY_FINISHED. Publica ItineraryCancelled y guarda el historial.")
     @PostMapping("/itineraries/{id}/cancel")
     @PreAuthorize("hasAnyRole('ADMIN', 'OPERADOR')")
-    public ItineraryDetail cancel(@PathVariable UUID id, @Valid @RequestBody CancelRequest request) {
-        return itineraryService.cancel(id, request.motivo());
+    public ItineraryDetail cancel(@PathVariable UUID id, @Valid @RequestBody CancelRequest request,
+                                  Authentication auth) {
+        return changeService.cancel(id, request.motivo(), CurrentUser.companyScope(auth), CurrentUser.id(auth));
     }
 }

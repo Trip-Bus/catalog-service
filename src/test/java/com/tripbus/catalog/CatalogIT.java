@@ -96,6 +96,9 @@ class CatalogIT {
 
     @Test
     void elSeedEsIdempotente() {
+        // Dos pasadas seguidas (y no contra la del @BeforeAll): si la prueba cruza la medianoche, la primera
+        // agrega el día nuevo y la segunda igual no crea nada.
+        seedService.seed();
         SeedResult segunda = seedService.seed();
         assertThat(segunda.itinerariosNuevos()).isZero();
         // 7 ciudades conectadas entre sí en los dos sentidos = 42 rutas, 5 salidas diarias, 23 días (ayer a +21).
@@ -187,6 +190,7 @@ class CatalogIT {
 
     @Test
     void elSeedManualSoloLoPuedeEjecutarUnAdministrador() throws Exception {
+        seedService.seed(); // por si la prueba cruza la medianoche (agrega el día nuevo)
         mockMvc.perform(post("/admin/seed")).andExpect(status().isUnauthorized());
         mockMvc.perform(post("/admin/seed").with(jwt()
                         .jwt(j -> j.subject(UUID.randomUUID().toString()).claim("role", "PASAJERO"))

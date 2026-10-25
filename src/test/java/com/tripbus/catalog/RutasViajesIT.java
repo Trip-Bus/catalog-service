@@ -503,7 +503,9 @@ class RutasViajesIT {
 
     @Test
     void elSeedNoGeneraCrucesYUsaBusAlternoEnRutasLargas() {
-        assertThat(seedService.seed().itinerariosNuevos()).isZero();
+        // Otra pasada del seed (si la prueba cruza la medianoche agrega el día nuevo; la idempotencia la
+        // prueba CatalogIT): tampoco puede dejar cruces.
+        seedService.seed();
         Integer cruces = jdbc.queryForObject("""
                 select count(*) from itineraries a
                 join itineraries b on a.bus_id = b.bus_id and a.id < b.id

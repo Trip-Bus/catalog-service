@@ -6,6 +6,8 @@ public final class CatalogEvents {
     public static final String ITINERARY_PUBLISHED = "ItineraryPublished";
     public static final String ITINERARY_CANCELLED = "ItineraryCancelled";
     public static final String PRICE_CHANGED = "PriceChanged";
+    public static final String ITINERARY_RESCHEDULED = "ItineraryRescheduled";
+    public static final String ITINERARY_BUS_CHANGED = "ItineraryBusChanged";
 
     public static final String COMPANY_CREATED = "CompanyCreated";
     public static final String COMPANY_UPDATED = "CompanyUpdated";
