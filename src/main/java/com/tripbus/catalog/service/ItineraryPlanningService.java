@@ -8,7 +8,6 @@ import com.tripbus.catalog.domain.Itinerary;
 import com.tripbus.catalog.domain.ItineraryStatus;
 import com.tripbus.catalog.domain.Route;
 import com.tripbus.catalog.domain.RouteStatus;
-import com.tripbus.catalog.repository.BusRepository;
 import com.tripbus.catalog.repository.ItineraryRepository;
 import com.tripbus.catalog.repository.RouteRepository;
 import com.tripbus.catalog.web.dto.CreateItineraryRequest;
@@ -17,27 +16,22 @@ import com.tripbus.catalog.web.dto.PageResponse;
 import com.tripbus.catalog.web.dto.ScheduleRequest;
 import com.tripbus.catalog.web.dto.ScheduleResponse;
 import jakarta.persistence.criteria.Predicate;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.data.domain.Limit;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.DayOfWeek;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -58,28 +52,25 @@ public class ItineraryPlanningService {
     static final BigDecimal PRECIO_MAXIMO = new BigDecimal("10000000000");
 
     private final RouteRepository routeRepository;
-    private final BusRepository busRepository;
     private final ItineraryRepository itineraryRepository;
+    private final BusSchedule busSchedule;
     private final ItineraryPublisher itineraryPublisher;
     private final SearchCache searchCache;
     private final Clock clock;
-    private final Duration turnaround;
 
     public ItineraryPlanningService(
             RouteRepository routeRepository,
-            BusRepository busRepository,
             ItineraryRepository itineraryRepository,
+            BusSchedule busSchedule,
             ItineraryPublisher itineraryPublisher,
             SearchCache searchCache,
-            Clock clock,
-            @Value("${tripbus.catalog.bus-turnaround:30m}") Duration turnaround) {
+            Clock clock) {
         this.routeRepository = routeRepository;
-        this.busRepository = busRepository;
         this.itineraryRepository = itineraryRepository;
+        this.busSchedule = busSchedule;
         this.itineraryPublisher = itineraryPublisher;
         this.searchCache = searchCache;
         this.clock = clock;
-        this.turnaround = turnaround;
     }
 
     private record Contexto(Route route, Bus bus, BigDecimal precio) {
@@ -93,9 +84,9 @@ public class ItineraryPlanningService {
             throw ApiException.badRequest("DEPARTURE_IN_PAST", "La fecha de salida debe estar en el futuro");
         }
         Instant llegada = llegada(ctx.route(), salida);
-        Optional<UUID> choque = cruce(ctx.bus(), salida, llegada);
+        Optional<UUID> choque = busSchedule.conflict(ctx.bus().getId(), salida, llegada);
         if (choque.isPresent()) {
-            throw conflicto(choque.get());
+            throw BusSchedule.conflictError(choque.get());
         }
         Itinerary itinerary = guardar(ctx, salida, llegada);
         itineraryPublisher.publishAfterCommit(List.of(itinerary));
@@ -119,10 +110,10 @@ public class ItineraryPlanningService {
                 continue;
             }
             Instant llegada = llegada(ctx.route(), salida);
-            Optional<UUID> choque = cruce(ctx.bus(), salida, llegada);
+            Optional<UUID> choque = busSchedule.conflict(ctx.bus().getId(), salida, llegada);
             if (choque.isPresent()) {
-                omitidos.add(new ScheduleResponse.Omitido(fecha, salida, "BUS_SCHEDULE_CONFLICT",
-                        "El bus ya tiene un viaje que se cruza con este horario", choque.get()));
+                omitidos.add(new ScheduleResponse.Omitido(fecha, salida, BusSchedule.CONFLICT,
+                        BusSchedule.CONFLICT_MESSAGE, choque.get()));
                 continue;
             }
             creados.add(guardar(ctx, salida, llegada));
@@ -195,7 +186,7 @@ public class ItineraryPlanningService {
         Route route = routeRepository.findWithCompany(routeId)
                 .filter(r -> companyScope == null || companyScope.equals(r.getCompany().getId()))
                 .orElseThrow(() -> ApiException.notFound("ROUTE_NOT_FOUND", "La ruta no existe"));
-        Bus bus = busRepository.findByIdForUpdate(busId)
+        Bus bus = busSchedule.lock(busId)
                 .filter(b -> companyScope == null || companyScope.equals(b.getCompanyId()))
                 .orElseThrow(() -> ApiException.notFound("BUS_NOT_FOUND", "El bus no existe"));
         if (!bus.getCompanyId().equals(route.getCompany().getId())) {
@@ -211,14 +202,8 @@ public class ItineraryPlanningService {
         return new Contexto(route, bus, precio);
     }
 
-    private static Instant llegada(Route route, Instant salida) {
+    static Instant llegada(Route route, Instant salida) {
         return salida.plus(route.getDuracionMinutos(), ChronoUnit.MINUTES);
-    }
-
-    /** Primer viaje no cancelado del bus que choca con [salida, llegada] más el alistamiento a cada lado. */
-    private Optional<UUID> cruce(Bus bus, Instant salida, Instant llegada) {
-        return itineraryRepository.findOverlapping(bus.getId(), salida.minus(turnaround), llegada.plus(turnaround),
-                Limit.of(1)).stream().findFirst();
     }
 
     private Itinerary guardar(Contexto ctx, Instant salida, Instant llegada) {
@@ -227,13 +212,7 @@ public class ItineraryPlanningService {
             return itineraryRepository.saveAndFlush(itinerary);
         } catch (DataIntegrityViolationException e) {
             // Defensa de la base (EXCLUDE ex_itineraries_bus_sin_cruce): no debería pasar con el bloqueo.
-            throw new ApiException(HttpStatus.CONFLICT, "BUS_SCHEDULE_CONFLICT",
-                    "El bus ya tiene un viaje que se cruza con este horario", Map.of());
+            throw BusSchedule.conflictError();
         }
-    }
-
-    private static ApiException conflicto(UUID itineraryId) {
-        return new ApiException(HttpStatus.CONFLICT, "BUS_SCHEDULE_CONFLICT",
-                "El bus ya tiene un viaje que se cruza con este horario", Map.of("itineraryId", itineraryId));
     }
 }

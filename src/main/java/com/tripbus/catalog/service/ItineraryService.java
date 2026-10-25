@@ -3,12 +3,9 @@ package com.tripbus.catalog.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tripbus.catalog.common.error.ApiException;
-import com.tripbus.catalog.common.events.EventPublisher;
 import com.tripbus.catalog.domain.Itinerary;
-import com.tripbus.catalog.domain.ItineraryStatus;
 import com.tripbus.catalog.domain.SeatMap;
 import com.tripbus.catalog.domain.Stop;
-import com.tripbus.catalog.events.CatalogEvents;
 import com.tripbus.catalog.repository.ItineraryRepository;
 import com.tripbus.catalog.repository.RouteRepository;
 import com.tripbus.catalog.repository.SeatMapRepository;
@@ -23,9 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -35,8 +30,6 @@ public class ItineraryService {
     private final RouteRepository routeRepository;
     private final StopRepository stopRepository;
     private final SeatMapRepository seatMapRepository;
-    private final EventPublisher eventPublisher;
-    private final SearchCache searchCache;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -45,16 +38,12 @@ public class ItineraryService {
             RouteRepository routeRepository,
             StopRepository stopRepository,
             SeatMapRepository seatMapRepository,
-            EventPublisher eventPublisher,
-            SearchCache searchCache,
             ObjectMapper objectMapper,
             Clock clock) {
         this.itineraryRepository = itineraryRepository;
         this.routeRepository = routeRepository;
         this.stopRepository = stopRepository;
         this.seatMapRepository = seatMapRepository;
-        this.eventPublisher = eventPublisher;
-        this.searchCache = searchCache;
         this.objectMapper = objectMapper;
         this.clock = clock;
     }
@@ -109,21 +98,6 @@ public class ItineraryService {
             throw ApiException.notFound("ROUTE_NOT_FOUND", "La ruta no existe");
         }
         return stopRepository.findByRouteIdOrderByOrdenAsc(routeId).stream().map(s -> toStop(s, null)).toList();
-    }
-
-    @Transactional
-    public ItineraryDetail cancel(UUID id, String motivo) {
-        Itinerary i = find(id);
-        if (i.getEstado() == ItineraryStatus.CANCELADO) {
-            throw ApiException.conflict("ITINERARY_ALREADY_CANCELLED", "El itinerario ya está cancelado");
-        }
-        i.cancelar();
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("itineraryId", i.getId());
-        payload.put("motivo", motivo);
-        eventPublisher.publishAfterCommit(CatalogEvents.ITINERARY_CANCELLED, payload);
-        searchCache.evictAll();
-        return detail(id);
     }
 
     private Itinerary find(UUID id) {
