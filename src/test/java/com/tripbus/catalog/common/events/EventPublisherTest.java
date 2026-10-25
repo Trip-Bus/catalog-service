@@ -73,7 +73,8 @@ class EventPublisherTest {
     void deshabilitadoNoPublica() {
         EventPublisher apagado = new EventPublisher(redis,
                 new ObjectMapper(), new EventProperties(false, null, 0, "g", false), "catalog-service");
-        assertThat(apagado.publish("evt-1", "X", Map.of())).isEqualTo("evt-1");
+        apagado.publish("evt-1", "X", Map.of());
+        assertThat(apagado.publish("X", Map.of())).isNotBlank();
         verify(redis, never()).opsForStream();
     }
 

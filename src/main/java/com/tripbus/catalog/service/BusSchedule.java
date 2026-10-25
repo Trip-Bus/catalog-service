@@ -46,13 +46,13 @@ public class BusSchedule {
     }
 
     /** Primer viaje del bus que choca con [salida, llegada] más el alistamiento a cada lado. */
-    public Optional<UUID> conflict(UUID busId, Instant salida, Instant llegada) {
+    public Optional<UUID> findConflict(UUID busId, Instant salida, Instant llegada) {
         return first(itineraryRepository.findOverlapping(busId, salida.minus(turnaround), llegada.plus(turnaround),
                 Limit.of(1)));
     }
 
-    /** Igual que {@link #conflict} sin contar el viaje {@code excluir} (al reprogramarlo o cambiarle el bus). */
-    public Optional<UUID> conflictExcept(UUID busId, Instant salida, Instant llegada, UUID excluir) {
+    /** Igual que {@link #findConflict} sin contar el viaje {@code excluir} (al reprogramarlo o cambiarle el bus). */
+    public Optional<UUID> findConflictExcept(UUID busId, Instant salida, Instant llegada, UUID excluir) {
         return first(itineraryRepository.findOverlappingExcept(busId, salida.minus(turnaround),
                 llegada.plus(turnaround), excluir, Limit.of(1)));
     }

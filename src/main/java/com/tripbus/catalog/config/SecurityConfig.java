@@ -23,8 +23,11 @@ public class SecurityConfig {
             HttpSecurity http,
             JsonSecurityHandlers handlers,
             @Value("${tripbus.internal-token}") String internalToken) throws Exception {
+        // CSRF no aplica: la API es sin estado (sin sesión ni cookies) y se autentica con el JWT del header
+        // Authorization o con X-Internal-Token, que el navegador nunca adjunta solo a una petición de otro sitio.
+        // Con CSRF activo, todo POST/PUT/PATCH con bearer token respondería 403.
         http
-                .csrf(AbstractHttpConfigurer::disable)
+                .csrf(AbstractHttpConfigurer::disable) // NOSONAR java:S4502 API stateless con bearer token
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(a -> a
                         .requestMatchers("/actuator/health/**", "/actuator/info", "/actuator/prometheus").permitAll()

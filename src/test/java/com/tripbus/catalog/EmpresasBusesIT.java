@@ -107,6 +107,7 @@ class EmpresasBusesIT {
 
     @Test
     void elSeedSigueIdempotenteConEmpresasActivasYBusesActivos() throws Exception {
+        seedService.seed(); // por si la prueba cruza la medianoche (agrega el día nuevo)
         SeedResult segunda = seedService.seed();
         assertThat(segunda.itinerariosNuevos()).isZero();
         assertThat(segunda.buses()).isZero();

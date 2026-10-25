@@ -84,7 +84,7 @@ public class ItineraryPlanningService {
             throw ApiException.badRequest("DEPARTURE_IN_PAST", "La fecha de salida debe estar en el futuro");
         }
         Instant llegada = llegada(ctx.route(), salida);
-        Optional<UUID> choque = busSchedule.conflict(ctx.bus().getId(), salida, llegada);
+        Optional<UUID> choque = busSchedule.findConflict(ctx.bus().getId(), salida, llegada);
         if (choque.isPresent()) {
             throw BusSchedule.conflictError(choque.get());
         }
@@ -110,7 +110,7 @@ public class ItineraryPlanningService {
                 continue;
             }
             Instant llegada = llegada(ctx.route(), salida);
-            Optional<UUID> choque = busSchedule.conflict(ctx.bus().getId(), salida, llegada);
+            Optional<UUID> choque = busSchedule.findConflict(ctx.bus().getId(), salida, llegada);
             if (choque.isPresent()) {
                 omitidos.add(new ScheduleResponse.Omitido(fecha, salida, BusSchedule.CONFLICT,
                         BusSchedule.CONFLICT_MESSAGE, choque.get()));

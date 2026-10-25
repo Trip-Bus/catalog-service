@@ -86,7 +86,7 @@ class ItineraryChangeServiceTest {
         when(itineraries.findDetailed(viaje.getId())).thenReturn(Optional.of(viaje));
         when(busSchedule.lock(busA.getId())).thenReturn(Optional.of(busA));
         when(busSchedule.lock(busB.getId())).thenReturn(Optional.of(busB));
-        when(busSchedule.conflictExcept(any(), any(), any(), any())).thenReturn(Optional.empty());
+        when(busSchedule.findConflictExcept(any(), any(), any(), any())).thenReturn(Optional.empty());
         when(itineraryPublisher.seatNumbers(busA)).thenReturn(ASIENTOS_A);
         when(itineraryPublisher.seatNumbers(busB)).thenReturn(ASIENTOS_B);
         TransactionSynchronizationManager.initSynchronization();
@@ -118,7 +118,7 @@ class ItineraryChangeServiceTest {
         assertThat(r.fechaSalida()).isEqualTo(nueva);
         assertThat(r.fechaLlegadaEstimada()).isEqualTo(nueva.plus(120, ChronoUnit.MINUTES));
         verify(busSchedule).lock(busA.getId());
-        verify(busSchedule).conflictExcept(busA.getId(), nueva, nueva.plus(120, ChronoUnit.MINUTES), viaje.getId());
+        verify(busSchedule).findConflictExcept(busA.getId(), nueva, nueva.plus(120, ChronoUnit.MINUTES), viaje.getId());
         ArgumentCaptor<ItineraryChange> cambio = ArgumentCaptor.forClass(ItineraryChange.class);
         verify(changes).save(cambio.capture());
         assertThat(cambio.getValue().getTipo()).isEqualTo(ChangeType.RETRASO);
@@ -135,7 +135,7 @@ class ItineraryChangeServiceTest {
     @Test
     void reprogramarConCruceEs409() {
         UUID otro = UUID.randomUUID();
-        when(busSchedule.conflictExcept(any(), any(), any(), any())).thenReturn(Optional.of(otro));
+        when(busSchedule.findConflictExcept(any(), any(), any(), any())).thenReturn(Optional.of(otro));
         assertThatThrownBy(() -> service.reschedule(viaje.getId(),
                 new RescheduleRequest(viaje.getFechaSalida().plusSeconds(600), "x"), null, USUARIO))
                 .isInstanceOf(ApiException.class)
@@ -244,7 +244,7 @@ class ItineraryChangeServiceTest {
                 "BUS_NOT_ACTIVE");
         busB.cambiarEstado(BusStatus.ACTIVO, AHORA);
 
-        when(busSchedule.conflictExcept(eq(busB.getId()), any(), any(), any())).thenReturn(Optional.of(UUID.randomUUID()));
+        when(busSchedule.findConflictExcept(eq(busB.getId()), any(), any(), any())).thenReturn(Optional.of(UUID.randomUUID()));
         codigo(() -> service.changeBus(viaje.getId(), new ChangeBusRequest(busB.getId(), "x"), null, USUARIO),
                 BusSchedule.CONFLICT);
         verify(seatInventory, never()).remap(any(), anyList(), anyInt());

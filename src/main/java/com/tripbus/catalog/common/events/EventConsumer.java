@@ -108,11 +108,13 @@ public class EventConsumer implements SmartLifecycle {
 
     /** true si el mensaje de la excepción o de alguna de sus causas contiene el texto. */
     static boolean mentions(Throwable t, String text) {
-        for (Throwable c = t; c != null; c = c.getCause()) {
+        Throwable c = t;
+        do {
             if (String.valueOf(c.getMessage()).contains(text)) {
                 return true;
             }
-        }
+            c = c.getCause();
+        } while (c != null);
         return false;
     }
 

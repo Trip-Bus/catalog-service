@@ -113,7 +113,7 @@ public class ItineraryChangeService {
         Instant llegada = ItineraryPlanningService.llegada(itinerary.getRoute(), nueva);
         UUID busId = itinerary.getBus().getId();
         busSchedule.lock(busId);
-        busSchedule.conflictExcept(busId, nueva, llegada, itinerary.getId()).ifPresent(choque -> {
+        busSchedule.findConflictExcept(busId, nueva, llegada, itinerary.getId()).ifPresent(choque -> {
             throw BusSchedule.conflictError(choque);
         });
 
@@ -169,7 +169,7 @@ public class ItineraryChangeService {
         if (nuevo.getEstado() != BusStatus.ACTIVO) {
             throw ApiException.conflict("BUS_NOT_ACTIVE", "El bus no está ACTIVO (" + nuevo.getEstado() + ")");
         }
-        busSchedule.conflictExcept(nuevo.getId(), itinerary.getFechaSalida(), itinerary.getFechaLlegadaEstimada(),
+        busSchedule.findConflictExcept(nuevo.getId(), itinerary.getFechaSalida(), itinerary.getFechaLlegadaEstimada(),
                 itinerary.getId()).ifPresent(choque -> {
                     throw BusSchedule.conflictError(choque);
                 });
