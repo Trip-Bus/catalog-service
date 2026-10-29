@@ -3,7 +3,7 @@ package com.tripbus.catalog.web;
 import com.tripbus.catalog.service.InProgressService;
 import com.tripbus.catalog.service.SearchService;
 import com.tripbus.catalog.web.dto.TripInProgress;
-import com.tripbus.catalog.web.dto.TripSearchResult;
+import com.tripbus.catalog.web.dto.PublicTripSearchResult;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -11,6 +11,9 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseEntity;
+import java.math.BigDecimal;
+import java.util.UUID;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -29,11 +32,30 @@ public class TripController {
 
     /** US-007/US-008/US-014: GET /trips/search?origin=Bogotá&destination=Medellín&date=2026-10-02 */
     @GetMapping("/search")
-    public List<TripSearchResult> search(
+    public ResponseEntity<List<PublicTripSearchResult>> search(
             @RequestParam String origin,
             @RequestParam String destination,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(required = false) UUID companyId,
+            @RequestParam(required = false) String franja,
+            @RequestParam(required = false) BigDecimal precioMin,
+            @RequestParam(required = false) BigDecimal precioMax,
+            @RequestParam(required = false) String tipoBus,
+            @RequestParam(defaultValue = "salida") String sort,
+            @RequestParam(defaultValue = "asc") String order,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        var result = searchService.search(origin, destination, date, companyId, franja, precioMin, precioMax,
+                tipoBus, sort, order, page, size);
+        return ResponseEntity.ok().header("X-Total-Count", Long.toString(result.total()))
+                .body(result.content().stream().map(PublicTripSearchResult::from).toList());
+    }
+
+    @GetMapping("/search/companies")
+    public List<com.tripbus.catalog.web.dto.SearchCompany> searchCompanies(
+            @RequestParam String origin, @RequestParam String destination,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        return searchService.search(origin, destination, date);
+        return searchService.companies(origin, destination, date);
     }
 
     /**

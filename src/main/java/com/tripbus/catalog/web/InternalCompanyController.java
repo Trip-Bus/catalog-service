@@ -8,6 +8,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
+import java.time.LocalDate;
+import org.springframework.web.bind.annotation.RequestParam;
 
 /**
  * Servicio a servicio (X-Internal-Token, ver InternalTokenFilter): identity valida el companyId
@@ -24,7 +26,7 @@ public class InternalCompanyController {
     }
 
     @GetMapping("/{id}")
-    public CompanyInternalResponse get(@PathVariable UUID id) {
-        return companyService.internal(id);
+    public CompanyInternalResponse get(@PathVariable UUID id, @RequestParam(required = false) LocalDate fecha) {
+        return companyService.internal(id, fecha);
     }
 }

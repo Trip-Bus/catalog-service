@@ -24,6 +24,12 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
+import com.tripbus.catalog.service.CompanyTermsService;
+import com.tripbus.catalog.web.dto.CompanyTermsRequest;
+import com.tripbus.catalog.web.dto.CompanyTermsResponse;
+import com.tripbus.catalog.common.security.CurrentUser;
+import org.springframework.security.core.Authentication;
+import java.util.List;
 
 /** US-100: empresas transportadoras. Solo administradores. */
 @RestController
@@ -31,9 +37,11 @@ import java.util.UUID;
 public class CompanyController {
 
     private final CompanyService companyService;
+    private final CompanyTermsService termsService;
 
-    public CompanyController(CompanyService companyService) {
+    public CompanyController(CompanyService companyService, CompanyTermsService termsService) {
         this.companyService = companyService;
+        this.termsService = termsService;
     }
 
     @Operation(summary = "Crear empresa (ADMIN)", description = "Publica CompanyCreated. 409 NIT_ALREADY_EXISTS.")
@@ -74,5 +82,21 @@ public class CompanyController {
     @PreAuthorize("hasRole('ADMIN')")
     public CompanyResponse changeStatus(@PathVariable UUID id, @Valid @RequestBody CompanyStatusRequest request) {
         return companyService.changeStatus(id, request.estado());
+    }
+
+    @PostMapping("/{id}/terms")
+    @ResponseStatus(HttpStatus.CREATED)
+    @PreAuthorize("hasRole('ADMIN')")
+    public CompanyTermsResponse addTerms(@PathVariable UUID id, @Valid @RequestBody CompanyTermsRequest request,
+                                         Authentication authentication) {
+        return termsService.create(id, request, CurrentUser.id(authentication));
+    }
+
+    @GetMapping("/{id}/terms")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('OPERADOR')")
+    public List<CompanyTermsResponse> terms(@PathVariable UUID id, Authentication authentication) {
+        if (CurrentUser.hasRole(authentication, "OPERADOR") && !id.equals(CurrentUser.companyId(authentication)))
+            throw com.tripbus.catalog.common.error.ApiException.notFound("COMPANY_NOT_FOUND", "La empresa no existe");
+        return termsService.history(id);
     }
 }

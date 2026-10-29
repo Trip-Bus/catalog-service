@@ -57,6 +57,29 @@ public class SeatInventoryClient {
 
     public record Availability(UUID itineraryId, int disponibles, int total) {
     }
+    public record Occupancy(int vendidos, int disponibles, int bloqueados, java.math.BigDecimal porcentaje, java.math.BigDecimal tasaAbandono) { }
+
+    public Optional<Map<UUID, Occupancy>> occupancy(Collection<UUID> itineraryIds) {
+        if (itineraryIds.isEmpty()) return Optional.of(Map.of());
+        String ids = itineraryIds.stream().map(UUID::toString).collect(Collectors.joining(","));
+        try {
+            JsonNode body = restClient.get().uri(uriBuilder -> uriBuilder.path("/internal/occupancy")
+                    .queryParam("itineraryIds", ids).build()).header(InternalTokenFilter.HEADER, internalToken)
+                    .retrieve().body(JsonNode.class);
+            JsonNode items = body != null && body.isArray() ? body : body == null ? JSON.createArrayNode() : body.path("occupaciones");
+            Map<UUID, Occupancy> result = new HashMap<>();
+            for (JsonNode item : items) {
+                UUID id = UUID.fromString(item.path("itineraryId").asText());
+                result.put(id, new Occupancy(item.path("vendidos").asInt(), item.path("disponibles").asInt(),
+                        item.path("bloqueados").asInt(), item.path("porcentaje").decimalValue(),
+                        item.path("tasaAbandono").decimalValue()));
+            }
+            return Optional.of(result);
+        } catch (RuntimeException e) {
+            log.warn("Seat Inventory no respondió la ocupación: {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
 
     /** Resultado de POST /internal/itineraries/{id}/remap. */
     public record RemapResult(Status status, List<String> asientosEnConflicto) {
