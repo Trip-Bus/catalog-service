@@ -151,6 +151,92 @@ class SearchServiceTest {
         assertThat(s.cities()).containsExactly("Bogotá", "Cali", "Tunja");
     }
 
+    @Test
+    void aplicaFranjaNocturnaPrecioDeOfertaOrdenYPaginacion() {
+        UUID company = UUID.randomUUID();
+        TripSearchResult noche = new TripSearchResult(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "Andina",
+                "Bogotá", "Medellín", AHORA.plus(19, ChronoUnit.HOURS), AHORA.plus(27, ChronoUnit.HOURS), 480,
+                new BigDecimal("90000"), "COP", "DOS_PISOS", CAPACIDAD, null, null,
+                new com.tripbus.catalog.web.dto.OfertaResumen(UUID.randomUUID(), new BigDecimal("60000"), AHORA.plus(2, ChronoUnit.DAYS)), false, company);
+        when(cache.get(anyString(), anyString(), any())).thenReturn(Optional.of(List.of(viaje, noche)));
+        when(seatInventory.availability(anyCollection())).thenReturn(Optional.of(Map.of()));
+        var first = service.search("Bogotá", "Medellín", LocalDate.of(2026, 10, 12), company, "NOCHE",
+                new BigDecimal("55000"), new BigDecimal("65000"), "DOS_PISOS", "precio", "asc", 0, 1);
+        assertThat(first.total()).isEqualTo(1);
+        assertThat(first.content()).extracting(TripSearchResult::itineraryId).containsExactly(noche.itineraryId());
+        TripSearchResult tarde = new TripSearchResult(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "Andina",
+                "Bogotá", "Medellín", AHORA.plus(6, ChronoUnit.HOURS), AHORA.plus(13, ChronoUnit.HOURS), 420,
+                new BigDecimal("70000"), "COP", "UN_PISO", CAPACIDAD, null, null, null, false, company);
+        when(cache.get(anyString(), anyString(), any())).thenReturn(Optional.of(List.of(viaje, noche, tarde)));
+        var afternoon = service.search("Bogotá", "Medellín", LocalDate.of(2026, 10, 12), null, "TARDE", null,
+                null, null, "duracion", "desc", 0, 10);
+        assertThat(afternoon.content()).extracting(TripSearchResult::itineraryId).containsExactly(tarde.itineraryId());
+        assertThat(service.search("Bogotá", "Medellín", LocalDate.of(2026, 10, 12), null, null, null, null,
+                null, "salida", "desc", 0, 1).content()).hasSize(1);
+    }
+
+    @Test
+    void rechazaParametrosDeBusquedaInvalidos() {
+        assertThatThrownBy(() -> service.search("Bogotá", "Medellín", LocalDate.now(), null, "MADRUGADA", null,
+                null, null, "salida", "asc", 0, 50)).isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> service.search("Bogotá", "Medellín", LocalDate.now(), null, null,
+                new BigDecimal("20"), new BigDecimal("10"), null, "salida", "asc", 0, 50)).isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> service.search("Bogotá", "Medellín", LocalDate.now(), null, null, null,
+                null, null, "salida", "asc", 0, 101)).isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> service.search("Bogotá", "Medellín", LocalDate.now(), null, null,
+                new BigDecimal("-1"), null, null, "salida", "asc", 0, 50)).isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> service.search("Bogotá", "Medellín", LocalDate.now(), null, null, null,
+                null, "INVALIDO", "salida", "asc", 0, 50)).isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> service.search("Bogotá", "Medellín", LocalDate.now(), null, null, null,
+                null, null, "otro", "asc", 0, 50)).isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> service.search("Bogotá", "Medellín", LocalDate.now(), null, null, null,
+                null, null, "salida", "otro", 0, 50)).isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> service.search("Bogotá", "Medellín", LocalDate.now(), null, null, null,
+                null, null, "salida", "asc", -1, 50)).isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> service.search("Bogotá", "Medellín", LocalDate.now(), null, null, null,
+                new BigDecimal("-1"), null, "salida", "asc", 0, 50)).isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> service.search("Bogotá", "Medellín", LocalDate.now(), null, null, null,
+                null, null, "salida", "asc", 0, 0)).isInstanceOf(ApiException.class);
+    }
+
+    @Test
+    void filtrosCubrenLimitesDiurnosPrecioSinLimiteYTipoBusSinCoincidencias() {
+        UUID company = UUID.randomUUID();
+        TripSearchResult fiveAm = searchTrip("UN_PISO", new BigDecimal("40000"), AHORA.plus(3, ChronoUnit.HOURS), 180, company);
+        TripSearchResult noon = searchTrip("DOS_PISOS", new BigDecimal("60000"), AHORA.plus(5, ChronoUnit.HOURS), 360, company);
+        TripSearchResult sixPm = searchTrip("UN_PISO", new BigDecimal("80000"), AHORA.plus(11, ChronoUnit.HOURS), 480, company);
+        TripSearchResult sevenPm = searchTrip("UN_PISO", new BigDecimal("90000"), AHORA.plus(12, ChronoUnit.HOURS), 600, company);
+        TripSearchResult twoAm = searchTrip("DOS_PISOS", new BigDecimal("50000"), AHORA.plus(19, ChronoUnit.HOURS), 540, company);
+        when(cache.get(anyString(), anyString(), any())).thenReturn(Optional.of(List.of(fiveAm, noon, sixPm, sevenPm, twoAm)));
+        when(seatInventory.availability(anyCollection())).thenReturn(Optional.of(Map.of()));
+        var morning = service.search("Bogotá", "Medellín", LocalDate.of(2026, 10, 12), null, "MANANA", null, null,
+                null, "salida", "asc", 0, 10);
+        assertThat(morning.content()).extracting(TripSearchResult::itineraryId).containsExactly(fiveAm.itineraryId());
+        var afternoon = service.search("Bogotá", "Medellín", LocalDate.of(2026, 10, 12), null, "TARDE", null, null,
+                null, "salida", "asc", 0, 10);
+        assertThat(afternoon.content()).extracting(TripSearchResult::itineraryId).containsExactly(noon.itineraryId());
+        var evening = service.search("Bogotá", "Medellín", LocalDate.of(2026, 10, 12), null, "NOCHE", null, null,
+                null, "salida", "asc", 0, 10);
+        assertThat(evening.content()).extracting(TripSearchResult::itineraryId)
+                .containsExactly(sixPm.itineraryId(), sevenPm.itineraryId(), twoAm.itineraryId());
+        assertThat(service.search("Bogotá", "Medellín", LocalDate.of(2026, 10, 12), null, null,
+                new BigDecimal("60000"), null, "UN_PISO", "precio", "desc", 0, 10).content())
+                .extracting(TripSearchResult::itineraryId).containsExactly(sevenPm.itineraryId(), sixPm.itineraryId());
+        assertThat(service.search("Bogotá", "Medellín", LocalDate.of(2026, 10, 12), null, null, null,
+                new BigDecimal("45000"), "UN_PISO", "precio", "asc", 0, 10).content())
+                .extracting(TripSearchResult::itineraryId).containsExactly(fiveAm.itineraryId());
+        assertThat(service.search("Bogotá", "Medellín", LocalDate.of(2026, 10, 12), null, null, null,
+                new BigDecimal("49000"), "DOS_PISOS", "salida", "asc", 0, 10).content()).isEmpty();
+        assertThat(service.search("Bogotá", "Medellín", LocalDate.of(2026, 10, 12), null, null, null,
+                null, null, "salida", "asc", 0, 10).content()).hasSize(5);
+    }
+
+    private static TripSearchResult searchTrip(String type, BigDecimal price, Instant departure, int duration, UUID company) {
+        return new TripSearchResult(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "Empresa", "Bogotá", "Medellín",
+                departure, departure.plusSeconds(duration * 60L), duration, price, "COP", type, CAPACIDAD,
+                null, null, null, false, company);
+    }
+
     private static Itinerary itinerario(Instant salida) {
         Company empresa = new Company(UUID.randomUUID(), "Expreso Andino", null);
         Route ruta = new Route(UUID.randomUUID(), empresa, "Bogotá", "Medellín", 540);

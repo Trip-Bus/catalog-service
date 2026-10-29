@@ -18,6 +18,7 @@ import com.tripbus.catalog.repository.StopRepository;
 import com.tripbus.catalog.service.CatalogTime;
 import com.tripbus.catalog.service.ItineraryPublisher;
 import com.tripbus.catalog.service.SearchCache;
+import com.tripbus.catalog.service.CompanyTermsService;
 import com.tripbus.catalog.service.SeatLayoutFactory;
 import com.tripbus.catalog.web.dto.SeedResult;
 import org.slf4j.Logger;
@@ -64,6 +65,7 @@ public class SeedService {
     private final ObjectMapper objectMapper;
     private final Clock clock;
     private final Duration busTurnaround;
+    private final CompanyTermsService companyTermsService;
 
     public SeedService(
             CompanyRepository companyRepository,
@@ -76,8 +78,10 @@ public class SeedService {
             SearchCache searchCache,
             ObjectMapper objectMapper,
             Clock clock,
+            CompanyTermsService companyTermsService,
             @Value("${tripbus.catalog.bus-turnaround:30m}") Duration busTurnaround) {
         this.busTurnaround = busTurnaround;
+        this.companyTermsService = companyTermsService;
         this.companyRepository = companyRepository;
         this.routeRepository = routeRepository;
         this.stopRepository = stopRepository;
@@ -102,6 +106,7 @@ public class SeedService {
             Company company = companyRepository.findById(companyId)
                     .orElseGet(() -> companyRepository.save(new Company(companyId, c.nombre(), c.nit())));
             companies.put(c.key(), company);
+            companyTermsService.ensureInitial(companyId);
         }
 
         List<Bus> creados = new ArrayList<>();

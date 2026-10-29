@@ -69,6 +69,8 @@ info:
     commit: ${APP_COMMIT:local}
 
 tripbus:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:18000,http://localhost:3000,http://localhost:5173}
   internal-token: ${INTERNAL_API_TOKEN:tripbus_internal_qa_token}
   events:
     enabled: ${EVENTS_ENABLED:true}
@@ -81,6 +83,8 @@ tripbus:
   search:
     cache-ttl-seconds: 45
   catalog:
+    default-commission: ${TRIPBUS_CATALOG_DEFAULT_COMMISSION:5.00}
+    default-monthly-fee: ${TRIPBUS_CATALOG_DEFAULT_MONTHLY_FEE:0.00}
     # GET /trips/in-progress: viajes con fechaSalida - before <= ahora <= fechaLlegadaEstimada + after.
     # Mismo criterio que tracking-window-before/after de fleet-trip-events-service.
     in-progress-before: 30m

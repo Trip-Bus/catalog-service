@@ -13,7 +13,8 @@ Responde las búsquedas del pasajero y es dueño de la carga inicial de datos (s
 
 | Método | Endpoint | Descripción |
 |---|---|---|
-| GET | `/trips/search?origin=&destination=&date=YYYY-MM-DD` | Búsqueda (sin distinguir tildes), ordenada por salida, con asientos disponibles (consultados a Seat Inventory) y oferta activa. |
+| GET | `/trips/search?origin=&destination=&date=YYYY-MM-DD&companyId=&franja=&precioMin=&precioMax=&tipoBus=&sort=&order=&page=&size=` | Búsqueda pública. `franja`: `MANANA` (05:00–11:59), `TARDE` (12:00–17:59) o `NOCHE` (18:00–04:59), hora de Bogotá. Precio filtra el precio del pasajero (oferta activa si existe). `sort`: `salida` (default), `precio` o `duracion`; `order`: `asc` (default) o `desc`; `page`=0, `size`=50 (máximo 100). Sigue respondiendo lista; `X-Total-Count` da el total filtrado y está expuesto por CORS. Sin parámetros nuevos conserva el comportamiento actual. |
+| GET | `/trips/search/companies?origin=&destination=&date=YYYY-MM-DD` | Empresas con viajes disponibles para esa búsqueda (filtro de empresa). |
 | GET | `/trips/cities` | Ciudades disponibles. |
 | GET | `/trips/in-progress?origin=&destination=` | Viajes en ruta (público, US-039/US-047): para abrir el seguimiento del bus sin tiquete. Al menos uno de `origin`/`destination` (si no, 400 `INVALID_SEARCH`), sin distinguir tildes. Itinerarios no cancelados con `fechaSalida - 30 min <= ahora <= fechaLlegadaEstimada + 30 min` (`tripbus.catalog.in-progress-before`/`-after`, mismo criterio que la ventana de fleet), ordenados por salida, máximo 50. Devuelve `itineraryId`, `busId`, `empresa`, `origen`, `destino`, `fechaSalida`, `fechaLlegadaEstimada`; sin precio, asientos ni oferta, y sin cache. |
 | GET | `/itineraries/{id}` | Detalle con paradas y hora programada. |
@@ -27,7 +28,10 @@ Responde las búsquedas del pasajero y es dueño de la carga inicial de datos (s
 | GET | `/companies/{id}` | Detalle (ADMIN): `id`, `nombre`, `nit`, `estado`, `creadoEn`, `actualizadoEn`. 404 `COMPANY_NOT_FOUND`. |
 | PUT | `/companies/{id}` | Edita nombre y NIT (ADMIN) → `CompanyUpdated`. |
 | PATCH | `/companies/{id}/estado` | Body `{estado: ACTIVA\|INACTIVA}` (ADMIN). `INACTIVA` → `CompanyDeactivated`: sus viajes dejan de salir en `/trips/search` y `/trips/in-progress` y no puede crear buses (409 `COMPANY_INACTIVE`). Reactivar → `CompanyUpdated`. Invalida la cache de búsquedas. |
-| GET | `/internal/companies/{id}` | Servicio a servicio (`X-Internal-Token`): `{id, nombre, estado}`. Lo usa identity para validar el `companyId` de un operador. |
+| POST | `/companies/{id}/terms` | ADMIN agrega una vigencia inmutable: `{cuotaMensual, comisionPorcentaje, vigenteDesde}`. La fecha no puede estar en el pasado y la comisión debe estar entre 0 y 30 %. Publica `CompanyTermsChanged`. |
+| GET | `/companies/{id}/terms` | Historial para ADMIN o el OPERADOR de esa empresa, ordenado por vigencia descendente. |
+| GET | `/internal/companies/{id}?fecha=YYYY-MM-DD` | Servicio a servicio (`X-Internal-Token`): `{id, nombre, estado, comisionPorcentaje, cuotaMensual}`. `fecha` opcional (hoy por defecto); Booking consulta las condiciones vigentes para registrar la comisión de la venta. |
+| GET | `/operator/trips?desde=&hasta=&companyId=&page=&size=` | OPERADOR (empresa del token) o ADMIN (requiere `companyId`): viajes ordenados/paginados con ruta, salida, bus, estado, precio, oferta y ocupación de Seat Inventory. Fechas inclusivas en hora de Bogotá; rango predeterminado hoy a 7 días, máximo 31. Si Inventory falla, `ocupacion` es null y `ocupacionConocida` false. `resumen` agrega viajes, ocupación promedio conocida y candidatos a oferta (<40 % a 24 h). |
 | POST | `/buses` | Crea un bus (ADMIN/OPERADOR, US-110). Body `{placa, tipo, companyId?, distribucion?}`: placa `ABC123` única (409 `PLACA_ALREADY_EXISTS`), `tipo` `UN_PISO`/`DOS_PISOS`. El OPERADOR crea en la empresa de su token; el ADMIN debe enviar `companyId` (400 `COMPANY_REQUIRED`). Sin `distribucion` usa el mapa por defecto del tipo. Queda `ACTIVO`. |
 | GET | `/buses?estado=&tipo=&companyId=&page=&size=` | Buses paginados (ADMIN/OPERADOR). El OPERADOR solo ve los de su empresa; `companyId` solo aplica al ADMIN. |
 | GET | `/buses/{id}` | Detalle: `id`, `companyId`, `placa`, `tipo`, `capacidad`, `estado`, `creadoEn`, `actualizadoEn`. Un bus de otra empresa es 404 `BUS_NOT_FOUND` para el OPERADOR. |
@@ -176,6 +180,9 @@ no arranca y dice cuáles faltan (`RequiredSecretsCheck`).
 | `INTERNAL_API_TOKEN` | ✔ | `tripbus_internal_qa_token` |
 | `IDENTITY_JWKS_URI` | ✔ | `http://localhost:18001/.well-known/jwks.json` |
 | `SEAT_INVENTORY_URL` | ✔ | `http://localhost:18003` |
+| `TRIPBUS_CATALOG_DEFAULT_COMMISSION` | — | `5.00` (%) |
+| `TRIPBUS_CATALOG_DEFAULT_MONTHLY_FEE` | — | `0.00` (COP) |
+| `CORS_ALLOWED_ORIGINS` | — | `http://localhost:18000,http://localhost:3000,http://localhost:5173`; en QA/PROD define los orígenes exactos del frontend |
 
 Opcionales con valor por defecto: `SERVER_PORT` (18002), `DB_HOST` (localhost), `DB_PORT` (18102),
 `DB_NAME` (tripbus_catalog), `DB_USERNAME` (catalog), `DB_POOL_SIZE`, `REDIS_HOST` (localhost),

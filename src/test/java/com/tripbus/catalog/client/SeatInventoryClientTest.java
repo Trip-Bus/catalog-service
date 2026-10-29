@@ -22,6 +22,8 @@ import static com.github.tomakehurst.wiremock.client.WireMock.equalTo;
 import static com.github.tomakehurst.wiremock.client.WireMock.equalToJson;
 import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -81,6 +83,28 @@ class SeatInventoryClientTest {
         SeatInventoryClient client = clientContra(500, "{}");
 
         assertThat(client.availability(List.of(UUID.randomUUID()))).isEmpty();
+    }
+
+    @Test
+    void ocupacionAgrupadaDevuelveLosIndicadores() throws IOException {
+        UUID id = UUID.randomUUID();
+        String body = "[{\"itineraryId\":\"" + id + "\",\"vendidos\":10,\"disponibles\":20,"
+                + "\"bloqueados\":2,\"porcentaje\":31.25,\"tasaAbandono\":4.5}]";
+        var result = clientOccupancy(200, body).occupancy(List.of(id));
+        assertThat(result).isPresent();
+        assertThat(result.orElseThrow().get(id).vendidos()).isEqualTo(10);
+    }
+
+    @Test
+    void ocupacionAceptaElObjetoEnvolventeYRespuestasSinContenido() throws IOException {
+        UUID id = UUID.randomUUID();
+        var wrapped = clientOccupancy(200, "{\"occupaciones\":[{\"itineraryId\":\"" + id
+                + "\",\"vendidos\":1,\"disponibles\":2,\"bloqueados\":3,\"porcentaje\":25,\"tasaAbandono\":0}]}")
+                .occupancy(List.of(id));
+        assertThat(wrapped.orElseThrow()).containsKey(id);
+        assertThat(clientOccupancy(204, "").occupancy(List.of(id))).contains(Map.of());
+        assertThat(clientOccupancy(500, "{}").occupancy(List.of(id))).isEmpty();
+        assertThat(wiremockClient().occupancy(List.of())).contains(Map.of());
     }
 
     @Test
@@ -164,6 +188,20 @@ class SeatInventoryClientTest {
             exchange.sendResponseHeaders(status, bytes.length);
             try (OutputStream out = exchange.getResponseBody()) {
                 out.write(bytes);
+            }
+        });
+        server.start();
+        return new SeatInventoryClient(new ServiceUrls("http://localhost:" + server.getAddress().getPort()), TOKEN);
+    }
+
+    private SeatInventoryClient clientOccupancy(int status, String body) throws IOException {
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/internal/occupancy", exchange -> {
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(status, status == 204 ? -1 : bytes.length);
+            if (status != 204) {
+                try (OutputStream out = exchange.getResponseBody()) { out.write(bytes); }
             }
         });
         server.start();

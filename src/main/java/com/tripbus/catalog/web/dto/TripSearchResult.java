@@ -31,7 +31,18 @@ public record TripSearchResult(
         OfertaResumen ofertaActiva,
         @Schema(description = "true si asientosDisponibles y agotado vienen de Seat Inventory; false si Seat "
                 + "Inventory no respondió y ambos llegan en null.")
-        boolean disponibilidadConocida) {
+        boolean disponibilidadConocida,
+        UUID companyId) {
+
+    /** Constructor compatible con los resultados creados por consumidores sin companyId. */
+    public TripSearchResult(UUID itineraryId, UUID routeId, UUID busId, String empresa, String origen, String destino,
+            Instant fechaSalida, Instant fechaLlegadaEstimada, int duracionMinutos, BigDecimal precioBase, String moneda,
+            String tipoBus, int capacidad, Integer asientosDisponibles, Boolean agotado, OfertaResumen ofertaActiva,
+            boolean disponibilidadConocida) {
+        this(itineraryId, routeId, busId, empresa, origen, destino, fechaSalida, fechaLlegadaEstimada, duracionMinutos,
+                precioBase, moneda, tipoBus, capacidad, asientosDisponibles, agotado, ofertaActiva,
+                disponibilidadConocida, null);
+    }
 
     /** Una oferta que venció mientras el resultado estaba en cache ya no se muestra. */
     public TripSearchResult sinOfertaVencida(Instant now) {
@@ -40,7 +51,7 @@ public record TripSearchResult(
         }
         return new TripSearchResult(itineraryId, routeId, busId, empresa, origen, destino, fechaSalida,
                 fechaLlegadaEstimada, duracionMinutos, precioBase, moneda, tipoBus, capacidad,
-                asientosDisponibles, agotado, null, disponibilidadConocida);
+                asientosDisponibles, agotado, null, disponibilidadConocida, companyId);
     }
 
     /** disponibles = null significa que Seat Inventory no respondió: la disponibilidad queda desconocida. */
@@ -48,6 +59,6 @@ public record TripSearchResult(
         Boolean agotadoCalc = disponibles == null ? null : disponibles <= 0;
         return new TripSearchResult(itineraryId, routeId, busId, empresa, origen, destino, fechaSalida,
                 fechaLlegadaEstimada, duracionMinutos, precioBase, moneda, tipoBus, capacidad,
-                disponibles, agotadoCalc, ofertaActiva, disponibles != null);
+                disponibles, agotadoCalc, ofertaActiva, disponibles != null, companyId);
     }
 }

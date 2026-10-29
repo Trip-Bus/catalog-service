@@ -27,6 +27,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -152,6 +153,60 @@ class CatalogIT {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[?(@ == 'Bogotá')]").exists())
                 .andExpect(jsonPath("$[?(@ == 'Medellín')]").exists());
+    }
+
+    @Test
+    void busquedaFiltraEnMemoriaPaginaYExponeTotalSinCambiarElJsonPublico() throws Exception {
+        seedService.seed();
+        UUID company = SeedService.id("company:andino");
+        LocalDate manana = LocalDate.now(CatalogTime.ZONE).plusDays(1);
+        var response = mockMvc.perform(get("/trips/search").param("origin", "Bogotá").param("destination", "Medellín")
+                        .param("date", manana.toString()).param("companyId", company.toString()).param("franja", "MANANA")
+                        .param("sort", "precio").param("order", "asc").param("page", "0").param("size", "1"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].itineraryId").exists())
+                .andExpect(jsonPath("$[0].companyId").doesNotExist()).andReturn().getResponse();
+        assertThat(Integer.parseInt(response.getHeader("X-Total-Count"))).isGreaterThan(0);
+        mockMvc.perform(get("/trips/search/companies").param("origin", "Bogotá").param("destination", "Medellín")
+                        .param("date", manana.toString()))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].id").value(company.toString()));
+    }
+
+    @Test
+    void panelOperadorFuncionaConInventoryCaidoYTerminosRespetanVigencia() throws Exception {
+        seedService.seed();
+        UUID company = SeedService.id("company:andino");
+        UUID operator = UUID.randomUUID();
+        mockMvc.perform(get("/operator/trips").with(jwt().jwt(j -> j.subject(operator.toString())
+                                .claim("role", "OPERADOR").claim("companyId", company.toString()))
+                        .authorities(new SimpleGrantedAuthority("ROLE_OPERADOR"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.resumen.viajes").value(org.hamcrest.Matchers.greaterThan(0)))
+                .andExpect(jsonPath("$.content[0].ocupacion").isEmpty())
+                .andExpect(jsonPath("$.content[0].ocupacionConocida").value(false));
+
+        LocalDate vigente = LocalDate.now(CatalogTime.ZONE).plusDays(1);
+        mockMvc.perform(post("/companies/{id}/terms", company).with(jwt().jwt(j -> j.subject(operator.toString())
+                                .claim("role", "ADMIN")).authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"cuotaMensual\":0,\"comisionPorcentaje\":31,\"vigenteDesde\":\"" + vigente + "\"}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/companies/{id}/terms", company).with(jwt().jwt(j -> j.subject(operator.toString())
+                                .claim("role", "ADMIN")).authorities(new SimpleGrantedAuthority("ROLE_ADMIN")))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"cuotaMensual\":250000,\"comisionPorcentaje\":12.5,\"vigenteDesde\":\"" + vigente + "\"}"))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.comisionPorcentaje").value(12.5));
+        mockMvc.perform(get("/internal/companies/{id}", company).param("fecha", vigente.toString())
+                        .header("X-Internal-Token", "tripbus_internal_qa_token"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.cuotaMensual").value(250000))
+                .andExpect(jsonPath("$.comisionPorcentaje").value(12.5));
+        mockMvc.perform(get("/companies/{id}/terms", company).with(jwt().jwt(j -> j.subject(operator.toString())
+                                .claim("role", "OPERADOR").claim("companyId", company.toString()))
+                        .authorities(new SimpleGrantedAuthority("ROLE_OPERADOR"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].comisionPorcentaje").value(12.5));
+        mockMvc.perform(get("/companies/{id}/terms", company).with(jwt().jwt(j -> j.subject(operator.toString())
+                                .claim("role", "ADMIN")).authorities(new SimpleGrantedAuthority("ROLE_ADMIN"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].cuotaMensual").value(250000));
+        mockMvc.perform(get("/companies/{id}/terms", SeedService.id("company:cordillera"))
+                        .with(jwt().jwt(j -> j.subject(operator.toString()).claim("role", "OPERADOR")
+                                .claim("companyId", company.toString())).authorities(new SimpleGrantedAuthority("ROLE_OPERADOR"))))
+                .andExpect(status().isNotFound());
     }
 
     @Test

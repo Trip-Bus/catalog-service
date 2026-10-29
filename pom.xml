@@ -69,6 +69,12 @@
             **/domain/ItineraryChange.java,
             **/domain/Stop.java,
             **/common/events/ProcessedEvent.java,
+            **/domain/CompanyTerms.java,
+            **/web/dto/CompanyTermsRequest.java,
+            **/web/dto/CompanyTermsResponse.java,
+            **/web/dto/OperatorTripPage.java,
+            **/web/dto/PublicTripSearchResult.java,
+            **/web/dto/SearchCompany.java,
             **/config/OpenApiConfig.java
         </sonar.coverage.exclusions>
     </properties>
@@ -249,6 +255,12 @@
                         <exclude>**/domain/ItineraryChange.class</exclude>
                         <exclude>**/domain/Stop.class</exclude>
                         <exclude>**/common/events/ProcessedEvent.class</exclude>
+                        <exclude>**/domain/CompanyTerms.class</exclude>
+                        <exclude>**/web/dto/CompanyTermsRequest.class</exclude>
+                        <exclude>**/web/dto/CompanyTermsResponse.class</exclude>
+                        <exclude>**/web/dto/OperatorTripPage.class</exclude>
+                        <exclude>**/web/dto/PublicTripSearchResult.class</exclude>
+                        <exclude>**/web/dto/SearchCompany.class</exclude>
                         <exclude>**/config/OpenApiConfig.class</exclude>
                     </excludes>
                 </configuration>

@@ -15,6 +15,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
@@ -33,16 +34,25 @@ public class CompanyService {
     private final EventPublisher eventPublisher;
     private final SearchCache searchCache;
     private final Clock clock;
+    private final CompanyTermsService termsService;
 
+    @Autowired
     public CompanyService(
             CompanyRepository companyRepository,
             EventPublisher eventPublisher,
             SearchCache searchCache,
-            Clock clock) {
+            Clock clock,
+            CompanyTermsService termsService) {
         this.companyRepository = companyRepository;
         this.eventPublisher = eventPublisher;
         this.searchCache = searchCache;
         this.clock = clock;
+        this.termsService = termsService;
+    }
+
+    /** Constructor retained for focused unit tests without terms persistence. */
+    public CompanyService(CompanyRepository companyRepository, EventPublisher eventPublisher, SearchCache searchCache, Clock clock) {
+        this(companyRepository, eventPublisher, searchCache, clock, null);
     }
 
     @Transactional
@@ -50,6 +60,7 @@ public class CompanyService {
         UUID id = UUID.randomUUID();
         validarNitLibre(request.nit(), id);
         Company company = companyRepository.save(new Company(id, request.nombre().trim(), request.nit()));
+        if (termsService != null) termsService.ensureInitial(id);
         eventPublisher.publishAfterCommit(CatalogEvents.COMPANY_CREATED, payload(company));
         return CompanyResponse.from(company);
     }
@@ -94,9 +105,11 @@ public class CompanyService {
     }
 
     @Transactional(readOnly = true)
-    public CompanyInternalResponse internal(UUID id) {
+    public CompanyInternalResponse internal(UUID id, java.time.LocalDate fecha) {
         Company company = find(id);
-        return new CompanyInternalResponse(company.getId(), company.getNombre(), company.getEstado().name());
+        var terms = termsService.current(id, fecha == null ? java.time.LocalDate.now(clock.withZone(CatalogTime.ZONE)) : fecha);
+        return new CompanyInternalResponse(company.getId(), company.getNombre(), company.getEstado().name(),
+                terms.getComisionPorcentaje(), terms.getCuotaMensual());
     }
 
     /** Empresa existente y ACTIVA (para crear buses o rutas). */

@@ -13,14 +13,21 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.math.BigDecimal;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeSet;
 import java.util.UUID;
+import com.tripbus.catalog.domain.BusType;
+import com.tripbus.catalog.web.dto.SearchCompany;
 
 @Service
 public class SearchService {
+    public record SearchPage(List<TripSearchResult> content, long total) {}
 
     private final ItineraryRepository itineraryRepository;
     private final RouteRepository routeRepository;
@@ -44,6 +51,14 @@ public class SearchService {
     /** US-007 + US-008 + US-014. Resultados ordenados por hora de salida. */
     @Transactional(readOnly = true)
     public List<TripSearchResult> search(String origin, String destination, LocalDate date) {
+        return search(origin, destination, date, null, null, null, null, null, "salida", "asc", 0, 50).content();
+    }
+
+    @Transactional(readOnly = true)
+    public SearchPage search(String origin, String destination, LocalDate date, UUID companyId, String franja,
+                             BigDecimal precioMin, BigDecimal precioMax, String tipoBus, String sort, String order,
+                             int page, int size) {
+        validarFiltros(franja, precioMin, precioMax, tipoBus, sort, order, page, size);
         String origen = TextNormalizer.normalize(origin);
         String destino = TextNormalizer.normalize(destination);
         if (origen.isEmpty() || destino.isEmpty()) {
@@ -65,9 +80,63 @@ public class SearchService {
 
         Optional<Map<UUID, Integer>> disponibilidad =
                 seatInventoryClient.availability(vigentes.stream().map(TripSearchResult::itineraryId).toList());
-        return vigentes.stream()
+        List<TripSearchResult> filtered = vigentes.stream()
                 .map(r -> conDisponibilidad(r, disponibilidad).sinOfertaVencida(now))
-                .toList();
+                .filter(r -> companyId == null || companyId.equals(r.companyId()))
+                .filter(r -> enFranja(r, franja))
+                .filter(r -> dentroPrecio(r, precioMin, precioMax))
+                .filter(r -> tipoBus == null || tipoBus.equals(r.tipoBus()))
+                .sorted(orden(sort, order)).toList();
+        long total = filtered.size();
+        long offset = (long) page * size;
+        List<TripSearchResult> content = offset >= total ? List.of()
+                : filtered.subList((int) offset, (int) Math.min(total, offset + size));
+        return new SearchPage(content, total);
+    }
+
+    @Transactional(readOnly = true)
+    public List<SearchCompany> companies(String origin, String destination, LocalDate date) {
+        return search(origin, destination, date, null, null, null, null, null, "salida", "asc", 0, 100)
+                .content().stream().collect(java.util.stream.Collectors.toMap(TripSearchResult::companyId,
+                        r -> new SearchCompany(r.companyId(), r.empresa()), (a, b) -> a, java.util.TreeMap::new))
+                .values().stream().toList();
+    }
+
+    private static void validarFiltros(String franja, BigDecimal min, BigDecimal max, String tipo, String sort,
+                                       String order, int page, int size) {
+        if (franja != null && !List.of("MANANA", "TARDE", "NOCHE").contains(franja)
+                || min != null && min.signum() < 0 || max != null && max.signum() < 0
+                || min != null && max != null && min.compareTo(max) > 0
+                || tipo != null && !List.of(BusType.values()).stream().map(Enum::name).toList().contains(tipo)
+                || !List.of("salida", "precio", "duracion").contains(sort)
+                || !List.of("asc", "desc").contains(order) || page < 0 || size < 1 || size > 100) {
+            throw ApiException.badRequest("INVALID_SEARCH", "Parámetros de búsqueda inválidos");
+        }
+    }
+
+    private static boolean enFranja(TripSearchResult r, String franja) {
+        if (franja == null) return true;
+        LocalTime t = r.fechaSalida().atZone(ZoneId.of("America/Bogota")).toLocalTime();
+        return switch (franja) {
+            case "MANANA" -> !t.isBefore(LocalTime.of(5, 0)) && t.isBefore(LocalTime.of(12, 0));
+            case "TARDE" -> !t.isBefore(LocalTime.of(12, 0)) && t.isBefore(LocalTime.of(18, 0));
+            case "NOCHE" -> !t.isBefore(LocalTime.of(18, 0)) || t.isBefore(LocalTime.of(5, 0));
+            default -> false;
+        };
+    }
+
+    private static boolean dentroPrecio(TripSearchResult r, BigDecimal min, BigDecimal max) {
+        BigDecimal price = r.ofertaActiva() == null ? r.precioBase() : r.ofertaActiva().precioOferta();
+        return (min == null || price.compareTo(min) >= 0) && (max == null || price.compareTo(max) <= 0);
+    }
+
+    private static Comparator<TripSearchResult> orden(String sort, String order) {
+        Comparator<TripSearchResult> c = switch (sort) {
+            case "precio" -> Comparator.comparing(r -> r.ofertaActiva() == null ? r.precioBase() : r.ofertaActiva().precioOferta());
+            case "duracion" -> Comparator.comparingInt(TripSearchResult::duracionMinutos);
+            default -> Comparator.comparing(TripSearchResult::fechaSalida);
+        };
+        return order.equals("desc") ? c.reversed() : c;
     }
 
     /**
@@ -121,6 +190,7 @@ public class SearchService {
                 null,
                 null,
                 oferta,
-                false);
+                false,
+                i.getRoute().getCompany().getId());
     }
 }

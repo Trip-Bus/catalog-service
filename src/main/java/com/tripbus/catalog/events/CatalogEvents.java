@@ -12,6 +12,7 @@ public final class CatalogEvents {
     public static final String COMPANY_CREATED = "CompanyCreated";
     public static final String COMPANY_UPDATED = "CompanyUpdated";
     public static final String COMPANY_DEACTIVATED = "CompanyDeactivated";
+    public static final String COMPANY_TERMS_CHANGED = "CompanyTermsChanged";
 
     public static final String ROUTE_CREATED = "RouteCreated";
     public static final String ROUTE_UPDATED = "RouteUpdated";
