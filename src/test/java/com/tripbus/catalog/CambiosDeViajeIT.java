@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.github.tomakehurst.wiremock.verification.LoggedRequest;
 import com.tripbus.catalog.client.SeatInventoryClient;
+import com.tripbus.catalog.domain.Asiento;
 import com.tripbus.catalog.domain.Itinerary;
 import com.tripbus.catalog.repository.BusRepository;
 import com.tripbus.catalog.repository.ItineraryRepository;
@@ -25,6 +26,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.data.domain.Range;
+import org.springframework.data.redis.connection.Limit;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -47,6 +49,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -134,7 +137,7 @@ class CambiosDeViajeIT {
     void calentarSeatInventory() {
         seatInventoryResponde();
         for (int i = 0; i < 3; i++) {
-            seatInventoryClient.remap(UUID.randomUUID(), List.of("1"), 1);
+            seatInventoryClient.remap(UUID.randomUUID(), List.of(new Asiento("1", "ESTANDAR")));
         }
     }
 
@@ -517,7 +520,11 @@ class CambiosDeViajeIT {
     /** Payloads de los eventos de ese tipo para el viaje, en orden de publicación. */
     private List<JsonNode> eventos(String tipo, String itineraryId) throws Exception {
         List<JsonNode> eventos = new ArrayList<>();
-        for (var r : redisTemplate.opsForStream().range(stream, Range.unbounded())) {
+        // Solo los últimos eventos: el seed deja miles en el stream y leerlo entero puede exceder el timeout de Redis.
+        var recientes = new ArrayList<>(redisTemplate.opsForStream()
+                .reverseRange(stream, Range.unbounded(), Limit.limit().count(500)));
+        Collections.reverse(recientes);
+        for (var r : recientes) {
             JsonNode payload = objectMapper.readTree(String.valueOf(r.getValue().get("payload")));
             if (tipo.equals(String.valueOf(r.getValue().get("type")))
                     && itineraryId.equals(payload.path("itineraryId").asText())) {

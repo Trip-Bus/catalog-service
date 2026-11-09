@@ -1,5 +1,9 @@
 package com.tripbus.catalog.client;
 
+import com.tripbus.catalog.domain.Asiento;
+
+import io.micrometer.observation.ObservationRegistry;
+
 import com.github.tomakehurst.wiremock.WireMockServer;
 import com.sun.net.httpserver.HttpServer;
 import com.tripbus.catalog.config.ServiceUrls;
@@ -25,6 +29,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.postRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
 import static com.github.tomakehurst.wiremock.client.WireMock.getRequestedFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathMatching;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -39,9 +44,17 @@ class SeatInventoryClientTest {
 
     private HttpServer server;
 
+    /**
+     * La primera petición a WireMock en la JVM puede tardar más que el read timeout (500 ms) del cliente: se calienta
+     * antes de las pruebas (si no, la que corra primero ve UNAVAILABLE). Las peticiones se borran en cada @BeforeEach.
+     */
     @BeforeAll
     static void iniciar() {
         WIREMOCK.start();
+        WIREMOCK.stubFor(post(urlPathMatching("/internal/itineraries/.*/remap")).willReturn(aResponse().withStatus(204)));
+        for (int i = 0; i < 3; i++) {
+            wiremockClient().remap(UUID.randomUUID(), List.of(new Asiento("1", "ESTANDAR")));
+        }
     }
 
     @AfterAll
@@ -109,14 +122,14 @@ class SeatInventoryClientTest {
 
     @Test
     void seatInventoryInalcanzableDevuelveOptionalVacio() {
-        SeatInventoryClient client = new SeatInventoryClient(new ServiceUrls("http://localhost:1"), TOKEN);
+        SeatInventoryClient client = new SeatInventoryClient(new ServiceUrls("http://localhost:1"), TOKEN, ObservationRegistry.NOOP);
 
         assertThat(client.availability(List.of(UUID.randomUUID()))).isEmpty();
     }
 
     @Test
     void sinItinerariosNoConsultaYRespondeMapaVacio() {
-        SeatInventoryClient client = new SeatInventoryClient(new ServiceUrls("http://localhost:1"), TOKEN);
+        SeatInventoryClient client = new SeatInventoryClient(new ServiceUrls("http://localhost:1"), TOKEN, ObservationRegistry.NOOP);
 
         assertThat(client.availability(List.of())).contains(Map.of());
     }
@@ -127,12 +140,13 @@ class SeatInventoryClientTest {
         WIREMOCK.stubFor(post(urlEqualTo("/internal/itineraries/" + viaje + "/remap"))
                 .willReturn(aResponse().withStatus(204)));
 
-        var r = wiremockClient().remap(viaje, List.of("1", "2"), 2);
+        var r = wiremockClient().remap(viaje, List.of(new Asiento("1", "ESTANDAR"), new Asiento("2", "PREMIUM")));
 
         assertThat(r.status()).isEqualTo(SeatInventoryClient.RemapResult.Status.OK);
         WIREMOCK.verify(postRequestedFor(urlEqualTo("/internal/itineraries/" + viaje + "/remap"))
                 .withHeader("X-Internal-Token", equalTo(TOKEN))
-                .withRequestBody(equalToJson("{\"seatNumbers\":[\"1\",\"2\"],\"capacidad\":2}")));
+                .withRequestBody(equalToJson("{\"seatNumbers\":[\"1\",\"2\"],\"seats\":[{\"numero\":\"1\",\"categoria\":\"ESTANDAR\"},"
+                        + "{\"numero\":\"2\",\"categoria\":\"PREMIUM\"}],\"capacidad\":2}")));
     }
 
     @Test
@@ -142,7 +156,7 @@ class SeatInventoryClientTest {
                 .willReturn(aResponse().withStatus(409).withHeader("Content-Type", "application/json")
                         .withBody("{\"error\":{\"code\":\"SEATS_CONFLICT\",\"details\":{\"asientos\":[\"39\",\"40\"]}}}")));
 
-        var r = wiremockClient().remap(viaje, List.of("1"), 1);
+        var r = wiremockClient().remap(viaje, List.of(new Asiento("1", "ESTANDAR")));
 
         assertThat(r.status()).isEqualTo(SeatInventoryClient.RemapResult.Status.SEATS_CONFLICT);
         assertThat(r.asientosEnConflicto()).containsExactly("39", "40");
@@ -153,17 +167,17 @@ class SeatInventoryClientTest {
         UUID viaje = UUID.randomUUID();
         WIREMOCK.stubFor(post(urlEqualTo("/internal/itineraries/" + viaje + "/remap"))
                 .willReturn(aResponse().withStatus(500)));
-        assertThat(wiremockClient().remap(viaje, List.of("1"), 1).status())
+        assertThat(wiremockClient().remap(viaje, List.of(new Asiento("1", "ESTANDAR"))).status())
                 .isEqualTo(SeatInventoryClient.RemapResult.Status.UNAVAILABLE);
 
         UUID lento = UUID.randomUUID();
         WIREMOCK.stubFor(post(urlEqualTo("/internal/itineraries/" + lento + "/remap"))
                 .willReturn(aResponse().withStatus(204).withFixedDelay(1500)));
-        assertThat(wiremockClient().remap(lento, List.of("1"), 1).status())
+        assertThat(wiremockClient().remap(lento, List.of(new Asiento("1", "ESTANDAR"))).status())
                 .isEqualTo(SeatInventoryClient.RemapResult.Status.UNAVAILABLE);
 
         // 404 tampoco es éxito: Catalog no cambia el bus si no sabe que Seat Inventory reasignó los asientos.
-        assertThat(wiremockClient().remap(UUID.randomUUID(), List.of("1"), 1).status())
+        assertThat(wiremockClient().remap(UUID.randomUUID(), List.of(new Asiento("1", "ESTANDAR"))).status())
                 .isEqualTo(SeatInventoryClient.RemapResult.Status.UNAVAILABLE);
     }
 
@@ -177,7 +191,7 @@ class SeatInventoryClientTest {
     }
 
     private static SeatInventoryClient wiremockClient() {
-        return new SeatInventoryClient(new ServiceUrls(WIREMOCK.baseUrl()), TOKEN);
+        return new SeatInventoryClient(new ServiceUrls(WIREMOCK.baseUrl()), TOKEN, ObservationRegistry.NOOP);
     }
 
     private SeatInventoryClient clientContra(int status, String body) throws IOException {
@@ -191,7 +205,7 @@ class SeatInventoryClientTest {
             }
         });
         server.start();
-        return new SeatInventoryClient(new ServiceUrls("http://localhost:" + server.getAddress().getPort()), TOKEN);
+        return new SeatInventoryClient(new ServiceUrls("http://localhost:" + server.getAddress().getPort()), TOKEN, ObservationRegistry.NOOP);
     }
 
     private SeatInventoryClient clientOccupancy(int status, String body) throws IOException {
@@ -205,6 +219,6 @@ class SeatInventoryClientTest {
             }
         });
         server.start();
-        return new SeatInventoryClient(new ServiceUrls("http://localhost:" + server.getAddress().getPort()), TOKEN);
+        return new SeatInventoryClient(new ServiceUrls("http://localhost:" + server.getAddress().getPort()), TOKEN, ObservationRegistry.NOOP);
     }
 }

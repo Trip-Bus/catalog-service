@@ -42,6 +42,7 @@ public class BusService {
     private final ItineraryRepository itineraryRepository;
     private final CompanyService companyService;
     private final ObjectMapper objectMapper;
+    private final SearchCache searchCache;
     private final Clock clock;
 
     public BusService(
@@ -50,12 +51,14 @@ public class BusService {
             ItineraryRepository itineraryRepository,
             CompanyService companyService,
             ObjectMapper objectMapper,
+            SearchCache searchCache,
             Clock clock) {
         this.busRepository = busRepository;
         this.seatMapRepository = seatMapRepository;
         this.itineraryRepository = itineraryRepository;
         this.companyService = companyService;
         this.objectMapper = objectMapper;
+        this.searchCache = searchCache;
         this.clock = clock;
     }
 
@@ -69,7 +72,9 @@ public class BusService {
         SeatMapValidator.Resultado mapa = request.distribucion() != null
                 ? SeatMapValidator.validar(request.distribucion(), request.tipo())
                 : porDefecto(request.tipo());
-        Bus bus = busRepository.save(new Bus(id, companyId, placa, request.tipo(), mapa.capacidad()));
+        Bus nuevo = new Bus(id, companyId, placa, request.tipo(), mapa.capacidad());
+        nuevo.cambiarServicios(request.servicios(), clock.instant());
+        Bus bus = busRepository.save(nuevo);
         seatMapRepository.save(new SeatMap(UUID.randomUUID(), id, toJson(mapa.distribucion())));
         return BusResponse.from(bus);
     }
@@ -103,6 +108,7 @@ public class BusService {
     /**
      * Cambia placa y tipo. Si cambia el tipo, el mapa vuelve al layout por defecto del nuevo tipo
      * (cambia la capacidad), así que no se permite si el bus tiene viajes futuros (409 BUS_IN_USE).
+     * US-113: con servicios los reemplaza (sin el campo, se conservan); salen en la búsqueda, que se invalida.
      */
     @Transactional
     public BusResponse update(UUID id, BusUpdateRequest request, UUID companyScope) {
@@ -117,6 +123,10 @@ public class BusService {
         if (cambiaTipo) {
             guardarMapa(bus, porDefecto(request.tipo()));
         }
+        if (request.servicios() != null && !request.servicios().equals(bus.getServicios())) {
+            bus.cambiarServicios(request.servicios(), clock.instant());
+            searchCache.evictAll();
+        }
         return BusResponse.from(bus);
     }
 
@@ -129,13 +139,13 @@ public class BusService {
         return BusResponse.from(bus);
     }
 
-    /** US-111: mismo JSON que SeatLayoutFactory (tipo, capacidad, pisos). */
+    /** US-111: mismo JSON que SeatLayoutFactory (tipo, capacidad, pisos); US-141: con la categoría de cada asiento. */
     @Transactional(readOnly = true)
     public JsonNode seatMap(UUID id, UUID companyScope) {
         Bus bus = find(id, companyScope);
-        return seatMapRepository.findByBusId(bus.getId())
+        return ItineraryPublisher.conCategorias(seatMapRepository.findByBusId(bus.getId())
                 .map(s -> readJson(s.getDistribucion()))
-                .orElseGet(() -> porDefecto(bus.getTipo()).distribucion());
+                .orElseGet(() -> porDefecto(bus.getTipo()).distribucion()));
     }
 
     @Transactional
@@ -144,7 +154,7 @@ public class BusService {
         SeatMapValidator.Resultado mapa = SeatMapValidator.validar(distribucion, bus.getTipo());
         validarSinViajesFuturos(bus);
         guardarMapa(bus, mapa);
-        return mapa.distribucion();
+        return ItineraryPublisher.conCategorias(mapa.distribucion());
     }
 
     private void guardarMapa(Bus bus, SeatMapValidator.Resultado mapa) {

@@ -1,5 +1,7 @@
 package com.tripbus.catalog.common.events;
 
+import com.tripbus.catalog.common.observability.TracePropagation;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -168,7 +170,7 @@ class EventConsumerIT {
     private EventConsumer consumidor(EventProperties props, List<DomainEventHandler> handlers) {
         PlatformTransactionManager tx = mock(PlatformTransactionManager.class);
         return new EventConsumer(factory, template, new ObjectMapper().findAndRegisterModules(), props,
-                new TransactionTemplate(tx), processed, handlers);
+                new TransactionTemplate(tx), processed, handlers, TracePropagation.noop());
     }
 
     private void publicar(String eventId, String tipo, String payload, boolean conFecha) {

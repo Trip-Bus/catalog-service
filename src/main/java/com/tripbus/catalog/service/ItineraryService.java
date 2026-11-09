@@ -71,7 +71,8 @@ public class ItineraryService {
                 i.getPrecioBase(),
                 i.getMoneda(),
                 oferta(i),
-                paradas);
+                paradas,
+                i.getBus().getServicios().stream().map(Enum::name).toList());
     }
 
     /** US-016: distribución real del bus asignado al itinerario. */
@@ -80,7 +81,7 @@ public class ItineraryService {
         Itinerary i = find(id);
         SeatMap seatMap = seatMapRepository.findByBusId(i.getBus().getId())
                 .orElseThrow(() -> ApiException.notFound("SEAT_MAP_NOT_FOUND", "El bus no tiene mapa de asientos"));
-        JsonNode distribucion = readJson(seatMap.getDistribucion());
+        JsonNode distribucion = ItineraryPublisher.conCategorias(readJson(seatMap.getDistribucion()));
         List<String> asientos = ItineraryPublisher.seatNumbers(distribucion);
         return new SeatMapResponse(i.getId(), i.getBus().getId(), i.getBus().getPlaca(), i.getBus().getTipo().name(),
                 i.getBus().getCapacidad(), asientos, distribucion);
@@ -115,7 +116,7 @@ public class ItineraryService {
     private static StopResponse toStop(Stop s, Instant salida) {
         Instant hora = salida != null ? salida.plusSeconds(s.getMinutosDesdeSalida() * 60L) : null;
         return new StopResponse(s.getId(), s.getOrden(), s.getNombre(), s.getLat(), s.getLng(),
-                s.getMinutosDesdeSalida(), hora);
+                s.getMinutosDesdeSalida(), hora, s.getTerminalId());
     }
 
     private JsonNode readJson(String json) {

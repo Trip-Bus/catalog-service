@@ -28,7 +28,6 @@
         <postgresql.version>42.7.12</postgresql.version>
 
         <springdoc.version>2.8.17</springdoc.version>
-        <logstash-logback.version>8.0</logstash-logback.version>
         <jacoco.version>0.8.12</jacoco.version>
         <wiremock.version>3.13.1</wiremock.version>
         <sonar-maven-plugin.version>5.8.0.7211</sonar-maven-plugin.version>
@@ -50,7 +49,7 @@
         <sonar.coverage.jacoco.xmlReportPaths>${project.build.directory}/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
         <!-- Fuera de la cobertura solo lo que no tiene lógica que probar (se sigue analizando como código):
              arranque de Spring, records de entrada/salida sin métodos, entidades JPA de solo
-             constructor/getters y la definición del documento OpenAPI. Se quedan DENTRO porque tienen
+             constructor/getters. Se quedan DENTRO porque tienen
              lógica: web/dto/TripSearchResult (sinOfertaVencida, withDisponibilidad) y domain/Itinerary
              (ofertas y cancelación). MISMA lista en <excludes> de jacoco-maven-plugin (formato .class). -->
         <sonar.coverage.exclusions>
@@ -74,8 +73,7 @@
             **/web/dto/CompanyTermsResponse.java,
             **/web/dto/OperatorTripPage.java,
             **/web/dto/PublicTripSearchResult.java,
-            **/web/dto/SearchCompany.java,
-            **/config/OpenApiConfig.java
+            **/web/dto/SearchCompany.java
         </sonar.coverage.exclusions>
     </properties>
 
@@ -143,11 +141,16 @@
             <version>${springdoc.version}</version>
         </dependency>
 
-        <!-- Logs en JSON en PROD (logback-spring.xml). -->
+        <!-- HT-10: trazas distribuidas (Micrometer Tracing + OpenTelemetry, exportadas por OTLP si hay
+             OTEL_EXPORTER_OTLP_ENDPOINT). Versiones gestionadas por Spring Boot. Los logs en JSON usan el
+             logging estructurado de Boot (ECS) con LOG_FORMAT=json. -->
         <dependency>
-            <groupId>net.logstash.logback</groupId>
-            <artifactId>logstash-logback-encoder</artifactId>
-            <version>${logstash-logback.version}</version>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-tracing-bridge-otel</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.opentelemetry</groupId>
+            <artifactId>opentelemetry-exporter-otlp</artifactId>
         </dependency>
 
         <dependency>
@@ -261,7 +264,6 @@
                         <exclude>**/web/dto/OperatorTripPage.class</exclude>
                         <exclude>**/web/dto/PublicTripSearchResult.class</exclude>
                         <exclude>**/web/dto/SearchCompany.class</exclude>
-                        <exclude>**/config/OpenApiConfig.class</exclude>
                     </excludes>
                 </configuration>
                 <executions>

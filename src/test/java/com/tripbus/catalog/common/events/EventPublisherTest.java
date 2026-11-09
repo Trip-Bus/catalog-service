@@ -1,6 +1,16 @@
 package com.tripbus.catalog.common.events;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tripbus.catalog.common.observability.TracePropagation;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
+import io.micrometer.tracing.otel.bridge.OtelCurrentTraceContext;
+import io.micrometer.tracing.otel.bridge.OtelPropagator;
+import io.micrometer.tracing.otel.bridge.OtelTracer;
+import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
+import io.opentelemetry.context.propagation.ContextPropagators;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.samplers.Sampler;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,7 +43,8 @@ class EventPublisherTest {
     @SuppressWarnings("unchecked")
     private final StreamOperations<String, Object, Object> stream = mock(StreamOperations.class);
     private final EventProperties props = new EventProperties(true, "tripbus:events:test", 1000, "catalog", true);
-    private final EventPublisher publisher = new EventPublisher(redis, new ObjectMapper(), props, "catalog-service");
+    private final EventPublisher publisher = new EventPublisher(redis, new ObjectMapper(), props, "catalog-service",
+            TracePropagation.noop());
 
     @BeforeEach
     void setUp() {
@@ -72,7 +83,8 @@ class EventPublisherTest {
     @Test
     void deshabilitadoNoPublica() {
         EventPublisher apagado = new EventPublisher(redis,
-                new ObjectMapper(), new EventProperties(false, null, 0, "g", false), "catalog-service");
+                new ObjectMapper(), new EventProperties(false, null, 0, "g", false), "catalog-service",
+                TracePropagation.noop());
         apagado.publish("evt-1", "X", Map.of());
         assertThat(apagado.publish("X", Map.of())).isNotBlank();
         verify(redis, never()).opsForStream();
@@ -108,6 +120,43 @@ class EventPublisherTest {
         publisher.publishAfterCommit("X", Map.of());
         verify(stream).add(any(MapRecord.class));
         verify(stream, never()).trim(anyString(), anyLong(), eq(true));
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void conUnaTrazaEnCursoElMensajeLlevaSuTraceparent() {
+        SdkTracerProvider provider = SdkTracerProvider.builder().setSampler(Sampler.alwaysOn()).build();
+        io.opentelemetry.api.trace.Tracer otel = provider.get("prueba");
+        Tracer tracer = new OtelTracer(otel, new OtelCurrentTraceContext(), event -> {
+        });
+        TracePropagation tracing = new TracePropagation(tracer,
+                new OtelPropagator(ContextPropagators.create(W3CTraceContextPropagator.getInstance()), otel));
+        EventPublisher conTrazas = new EventPublisher(redis, new ObjectMapper(), props, "catalog-service", tracing);
+        TransactionSynchronizationManager.initSynchronization();
+        Span span = tracer.nextSpan().name("operacion").start();
+        try (Tracer.SpanInScope ignored = tracer.withSpan(span)) {
+            conTrazas.publish("CompanyCreated", Map.of());
+            conTrazas.publishAfterCommit("CompanyUpdated", Map.of());
+        } finally {
+            span.end();
+        }
+        // El evento diferido se publica después del commit, ya sin span en curso, con la traza que lo originó.
+        TransactionSynchronizationManager.getSynchronizations().forEach(TransactionSynchronization::afterCommit);
+        provider.close();
+
+        ArgumentCaptor<MapRecord> records = ArgumentCaptor.forClass(MapRecord.class);
+        verify(stream, times(2)).add(records.capture());
+        assertThat(records.getAllValues()).allSatisfy(r -> assertThat(((Map<String, String>) r.getValue())
+                .get(TracePropagation.CAMPO)).startsWith("00-" + span.context().traceId() + "-"));
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void sinTrazaNoAgregaTraceparent() {
+        publisher.publish("X", Map.of());
+        ArgumentCaptor<MapRecord> record = ArgumentCaptor.forClass(MapRecord.class);
+        verify(stream).add(record.capture());
+        assertThat((Map<String, String>) record.getValue().getValue()).doesNotContainKey(TracePropagation.CAMPO);
     }
 
     @Test

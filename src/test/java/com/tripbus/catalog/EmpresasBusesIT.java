@@ -13,6 +13,7 @@ import com.tripbus.catalog.repository.ItineraryRepository;
 import com.tripbus.catalog.repository.RouteRepository;
 import com.tripbus.catalog.seed.SeedService;
 import com.tripbus.catalog.service.CatalogTime;
+import com.tripbus.catalog.service.ItineraryPublisher;
 import com.tripbus.catalog.service.SeatLayoutFactory;
 import com.tripbus.catalog.web.dto.SeedResult;
 import org.junit.jupiter.api.BeforeAll;
@@ -24,6 +25,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.data.domain.Range;
+import org.springframework.data.redis.connection.Limit;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -42,6 +44,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -186,7 +189,8 @@ class EmpresasBusesIT {
                 .andExpect(jsonPath("$.error.code").value("COMPANY_NOT_FOUND"));
 
         // Eventos publicados en el stream (mismo publisher de hoy).
-        List<String> tipos = redisTemplate.opsForStream().range(stream, Range.unbounded()).stream()
+        List<String> tipos = new ArrayList<>(redisTemplate.opsForStream()
+                .reverseRange(stream, Range.unbounded(), Limit.limit().count(500))).reversed().stream()
                 .filter(r -> String.valueOf(r.getValue().get("payload")).contains(id))
                 .map(r -> String.valueOf(r.getValue().get("type")))
                 .toList();
@@ -248,7 +252,7 @@ class EmpresasBusesIT {
                 .andExpect(jsonPath("$.id").value(andino.toString()))
                 .andExpect(jsonPath("$.nombre").value("Expreso Andino"))
                 .andExpect(jsonPath("$.estado").value("ACTIVA"))
-                .andExpect(jsonPath("$.nit").doesNotExist());
+                .andExpect(jsonPath("$.nit").value("900100001-1"));
         mockMvc.perform(get("/internal/companies/{id}", UUID.randomUUID()).header("X-Internal-Token", internalToken))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("COMPANY_NOT_FOUND"));
@@ -398,7 +402,8 @@ class EmpresasBusesIT {
             JsonNode mapa = json(mockMvc.perform(get("/buses/{id}/seatmap", busId).with(operador(companyId)))
                     .andExpect(status().isOk())
                     .andReturn().getResponse().getContentAsString());
-            assertThat(mapa).isEqualTo(objectMapper.valueToTree(SeatLayoutFactory.layout(tipo)));
+            // US-141: el mapa por defecto con la categoría ESTANDAR en cada asiento.
+            assertThat(mapa).isEqualTo(ItineraryPublisher.conCategorias(objectMapper.valueToTree(SeatLayoutFactory.layout(tipo))));
         }
         // El de un bus del seed (con viajes) es el mismo que ve /itineraries/{id}/seatmap.
         UUID busSeed = SeedService.id("bus:bog-med:0");

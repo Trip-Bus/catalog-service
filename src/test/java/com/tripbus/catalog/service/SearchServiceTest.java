@@ -1,5 +1,7 @@
 package com.tripbus.catalog.service;
 
+import com.tripbus.catalog.common.observability.CatalogMetrics;
+
 import com.tripbus.catalog.client.SeatInventoryClient;
 import com.tripbus.catalog.common.error.ApiException;
 import com.tripbus.catalog.domain.Bus;
@@ -9,6 +11,8 @@ import com.tripbus.catalog.domain.Itinerary;
 import com.tripbus.catalog.domain.Route;
 import com.tripbus.catalog.repository.ItineraryRepository;
 import com.tripbus.catalog.repository.RouteRepository;
+import com.tripbus.catalog.repository.SegmentPriceRepository;
+import com.tripbus.catalog.repository.StopRepository;
 import com.tripbus.catalog.web.dto.TripSearchResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -48,9 +52,9 @@ class SearchServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new SearchService(mock(ItineraryRepository.class), mock(RouteRepository.class), seatInventory,
-                cache, Clock.fixed(AHORA, ZoneOffset.UTC));
-        when(cache.get(anyString(), anyString(), any())).thenReturn(Optional.of(List.of(viaje)));
+        service = new SearchService(finder(mock(ItineraryRepository.class)), mock(RouteRepository.class), seatInventory,
+                cache, Clock.fixed(AHORA, ZoneOffset.UTC), CatalogMetrics.enMemoria());
+        when(cache.get(anyString(), anyString(), any(), anyString())).thenReturn(Optional.of(List.of(viaje)));
     }
 
     @Test
@@ -110,9 +114,9 @@ class SearchServiceTest {
     @Test
     void sinCacheConsultaLaBaseYGuardaElResultado() {
         ItineraryRepository repo = mock(ItineraryRepository.class);
-        SearchService conBase = new SearchService(repo, mock(RouteRepository.class), seatInventory, cache,
-                Clock.fixed(AHORA, ZoneOffset.UTC));
-        when(cache.get(anyString(), anyString(), any())).thenReturn(Optional.empty());
+        SearchService conBase = new SearchService(finder(repo), mock(RouteRepository.class), seatInventory, cache,
+                Clock.fixed(AHORA, ZoneOffset.UTC), CatalogMetrics.enMemoria());
+        when(cache.get(anyString(), anyString(), any(), anyString())).thenReturn(Optional.empty());
         when(seatInventory.availability(anyCollection())).thenReturn(Optional.of(Map.of()));
         Itinerary i = itinerario(AHORA.plus(3, ChronoUnit.HOURS));
         i.marcarOferta(UUID.randomUUID(), new BigDecimal("50000"), AHORA.plus(1, ChronoUnit.HOURS));
@@ -124,7 +128,7 @@ class SearchServiceTest {
         assertThat(hoy.get(0).ofertaActiva()).isNotNull();
         assertThat(hoy.get(0).asientosDisponibles()).isEqualTo(40);
         verify(repo).search(eq("bogota"), eq("medellin"), eq(AHORA), any());
-        verify(cache).put(eq("bogota"), eq("medellin"), eq(LocalDate.of(2026, 10, 12)), any());
+        verify(cache).put(eq("bogota"), eq("medellin"), eq(LocalDate.of(2026, 10, 12)), eq("AUTO"), any());
 
         // Un día que ya terminó no consulta la base.
         assertThat(conBase.search("Bogotá", "Medellín", LocalDate.of(2026, 10, 10))).isEmpty();
@@ -136,7 +140,7 @@ class SearchServiceTest {
         TripSearchResult salio = new TripSearchResult(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "E",
                 "Bogotá", "Medellín", AHORA.minusSeconds(60), AHORA.plusSeconds(3600), 60, BigDecimal.TEN, "COP",
                 "UN_PISO", CAPACIDAD, null, null, null, false);
-        when(cache.get(anyString(), anyString(), any())).thenReturn(Optional.of(List.of(salio)));
+        when(cache.get(anyString(), anyString(), any(), anyString())).thenReturn(Optional.of(List.of(salio)));
         when(seatInventory.availability(anyCollection())).thenReturn(Optional.of(Map.of()));
         assertThat(service.search("Bogotá", "Medellín", LocalDate.of(2026, 10, 12))).isEmpty();
     }
@@ -146,8 +150,8 @@ class SearchServiceTest {
         RouteRepository rutas = mock(RouteRepository.class);
         when(rutas.findOrigenes()).thenReturn(List.of("Tunja", "Bogotá"));
         when(rutas.findDestinos()).thenReturn(List.of("Bogotá", "Cali"));
-        SearchService s = new SearchService(mock(ItineraryRepository.class), rutas, seatInventory, cache,
-                Clock.fixed(AHORA, ZoneOffset.UTC));
+        SearchService s = new SearchService(finder(mock(ItineraryRepository.class)), rutas, seatInventory, cache,
+                Clock.fixed(AHORA, ZoneOffset.UTC), CatalogMetrics.enMemoria());
         assertThat(s.cities()).containsExactly("Bogotá", "Cali", "Tunja");
     }
 
@@ -158,7 +162,7 @@ class SearchServiceTest {
                 "Bogotá", "Medellín", AHORA.plus(19, ChronoUnit.HOURS), AHORA.plus(27, ChronoUnit.HOURS), 480,
                 new BigDecimal("90000"), "COP", "DOS_PISOS", CAPACIDAD, null, null,
                 new com.tripbus.catalog.web.dto.OfertaResumen(UUID.randomUUID(), new BigDecimal("60000"), AHORA.plus(2, ChronoUnit.DAYS)), false, company);
-        when(cache.get(anyString(), anyString(), any())).thenReturn(Optional.of(List.of(viaje, noche)));
+        when(cache.get(anyString(), anyString(), any(), anyString())).thenReturn(Optional.of(List.of(viaje, noche)));
         when(seatInventory.availability(anyCollection())).thenReturn(Optional.of(Map.of()));
         var first = service.search("Bogotá", "Medellín", LocalDate.of(2026, 10, 12), company, "NOCHE",
                 new BigDecimal("55000"), new BigDecimal("65000"), "DOS_PISOS", "precio", "asc", 0, 1);
@@ -167,7 +171,7 @@ class SearchServiceTest {
         TripSearchResult tarde = new TripSearchResult(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "Andina",
                 "Bogotá", "Medellín", AHORA.plus(6, ChronoUnit.HOURS), AHORA.plus(13, ChronoUnit.HOURS), 420,
                 new BigDecimal("70000"), "COP", "UN_PISO", CAPACIDAD, null, null, null, false, company);
-        when(cache.get(anyString(), anyString(), any())).thenReturn(Optional.of(List.of(viaje, noche, tarde)));
+        when(cache.get(anyString(), anyString(), any(), anyString())).thenReturn(Optional.of(List.of(viaje, noche, tarde)));
         var afternoon = service.search("Bogotá", "Medellín", LocalDate.of(2026, 10, 12), null, "TARDE", null,
                 null, null, "duracion", "desc", 0, 10);
         assertThat(afternoon.content()).extracting(TripSearchResult::itineraryId).containsExactly(tarde.itineraryId());
@@ -207,7 +211,7 @@ class SearchServiceTest {
         TripSearchResult sixPm = searchTrip("UN_PISO", new BigDecimal("80000"), AHORA.plus(11, ChronoUnit.HOURS), 480, company);
         TripSearchResult sevenPm = searchTrip("UN_PISO", new BigDecimal("90000"), AHORA.plus(12, ChronoUnit.HOURS), 600, company);
         TripSearchResult twoAm = searchTrip("DOS_PISOS", new BigDecimal("50000"), AHORA.plus(19, ChronoUnit.HOURS), 540, company);
-        when(cache.get(anyString(), anyString(), any())).thenReturn(Optional.of(List.of(fiveAm, noon, sixPm, sevenPm, twoAm)));
+        when(cache.get(anyString(), anyString(), any(), anyString())).thenReturn(Optional.of(List.of(fiveAm, noon, sixPm, sevenPm, twoAm)));
         when(seatInventory.availability(anyCollection())).thenReturn(Optional.of(Map.of()));
         var morning = service.search("Bogotá", "Medellín", LocalDate.of(2026, 10, 12), null, "MANANA", null, null,
                 null, "salida", "asc", 0, 10);
@@ -229,6 +233,11 @@ class SearchServiceTest {
                 new BigDecimal("49000"), "DOS_PISOS", "salida", "asc", 0, 10).content()).isEmpty();
         assertThat(service.search("Bogotá", "Medellín", LocalDate.of(2026, 10, 12), null, null, null,
                 null, null, "salida", "asc", 0, 10).content()).hasSize(5);
+    }
+
+    private static TripFinder finder(ItineraryRepository repo) {
+        return new TripFinder(repo, mock(RouteRepository.class), mock(StopRepository.class),
+                mock(SegmentPriceRepository.class), Clock.fixed(AHORA, ZoneOffset.UTC), 30);
     }
 
     private static TripSearchResult searchTrip(String type, BigDecimal price, Instant departure, int duration, UUID company) {

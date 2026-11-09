@@ -32,6 +32,40 @@ class TripSearchResultTest {
         assertThat(r.sinOfertaVencida(AHORA)).isSameAs(r);
     }
 
+    @Test
+    void elRecorridoCompletoUsaLaSalidaLaDuracionYElPrecioDelViaje() {
+        TripSearchResult sinOferta = conOferta(AHORA.minus(1, ChronoUnit.MINUTES)).sinOfertaVencida(AHORA);
+        TripSearchResult conOferta = conOferta(null);
+
+        assertThat(sinOferta.esTramo()).isFalse();
+        assertThat(sinOferta.salidaEfectiva()).isEqualTo(sinOferta.fechaSalida());
+        assertThat(sinOferta.duracionEfectiva()).isEqualTo(540);
+        assertThat(sinOferta.precioEfectivo()).isEqualByComparingTo("95000");
+        assertThat(conOferta.precioEfectivo()).isEqualByComparingTo("49900");
+        assertThat(conOferta.sinOfertaVencida(AHORA)).isSameAs(conOferta);
+        assertThat(conOferta.servicios()).isEmpty();
+    }
+
+    @Test
+    void unTramoUsaSuSalidaSuDuracionYSuPrecioYLosConserva() {
+        TripSearchResult viaje = conOferta(AHORA.minus(1, ChronoUnit.MINUTES));
+        Instant sube = viaje.fechaSalida().plus(210, ChronoUnit.MINUTES);
+        TripSearchResult tramo = viaje.conTramo(2, 4, sube, viaje.fechaSalida().plus(540, ChronoUnit.MINUTES),
+                new BigDecimal("58100"));
+
+        assertThat(tramo.esTramo()).isTrue();
+        assertThat(tramo.salidaEfectiva()).isEqualTo(sube);
+        assertThat(tramo.duracionEfectiva()).isEqualTo(330);
+        assertThat(tramo.precioEfectivo()).isEqualByComparingTo("58100");
+        TripSearchResult sinOferta = tramo.sinOfertaVencida(AHORA).withDisponibilidad(null);
+        assertThat(sinOferta.ofertaActiva()).isNull();
+        assertThat(sinOferta.fromOrden()).isEqualTo(2);
+        assertThat(sinOferta.toOrden()).isEqualTo(4);
+        assertThat(sinOferta.precio()).isEqualByComparingTo("58100");
+        assertThat(sinOferta.disponibilidadConocida()).isFalse();
+        assertThat(sinOferta.agotado()).isNull();
+    }
+
     private static TripSearchResult conOferta(Instant fin) {
         Instant salida = AHORA.plus(1, ChronoUnit.DAYS);
         return new TripSearchResult(UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), "Expreso Andino",

@@ -2,7 +2,10 @@ package com.tripbus.catalog.web;
 
 import com.tripbus.catalog.common.security.CurrentUser;
 import com.tripbus.catalog.domain.RouteStatus;
+import com.tripbus.catalog.service.FareService;
 import com.tripbus.catalog.service.RouteService;
+import com.tripbus.catalog.web.dto.FareDtos.SegmentPriceRequest;
+import com.tripbus.catalog.web.dto.FareDtos.SegmentPriceResponse;
 import com.tripbus.catalog.web.dto.PageResponse;
 import com.tripbus.catalog.web.dto.RouteRequest;
 import com.tripbus.catalog.web.dto.RouteResponse;
@@ -38,9 +41,11 @@ import java.util.UUID;
 public class RouteController {
 
     private final RouteService routeService;
+    private final FareService fareService;
 
-    public RouteController(RouteService routeService) {
+    public RouteController(RouteService routeService, FareService fareService) {
         this.routeService = routeService;
+        this.fareService = fareService;
     }
 
     @Operation(summary = "Crear ruta con paradas (ADMIN/OPERADOR)",
@@ -91,6 +96,24 @@ public class RouteController {
     public RouteResponse replaceStops(@PathVariable UUID id, @RequestBody List<StopRequest> paradas,
                                       Authentication auth) {
         return routeService.replaceStops(id, paradas, CurrentUser.companyScope(auth));
+    }
+
+    @Operation(summary = "Precios exactos por tramo (ADMIN/OPERADOR)", description = "US-138.")
+    @GetMapping("/{id}/segment-prices")
+    @PreAuthorize("hasAnyRole('ADMIN', 'OPERADOR')")
+    public List<SegmentPriceResponse> segmentPrices(@PathVariable UUID id, Authentication auth) {
+        return fareService.segmentPrices(id, CurrentUser.companyScope(auth));
+    }
+
+    @Operation(summary = "Reemplazar los precios exactos por tramo (ADMIN/OPERADOR)",
+            description = "US-138: lista completa [{desdeOrden, hastaOrden, precio}]; cada tramo de una parada a otra "
+                    + "posterior, sin repetirse ni ser el recorrido completo; precio > 0. 400 INVALID_FARE.")
+    @PutMapping("/{id}/segment-prices")
+    @PreAuthorize("hasAnyRole('ADMIN', 'OPERADOR')")
+    public List<SegmentPriceResponse> replaceSegmentPrices(@PathVariable UUID id,
+                                                           @RequestBody List<SegmentPriceRequest> precios,
+                                                           Authentication auth) {
+        return fareService.replaceSegmentPrices(id, precios, CurrentUser.companyScope(auth));
     }
 
     @PatchMapping("/{id}/estado")

@@ -6,8 +6,11 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.tripbus.catalog.common.error.ApiException;
 import com.tripbus.catalog.domain.BusType;
+import com.tripbus.catalog.domain.CategoriaAsiento;
 
+import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -15,6 +18,9 @@ import java.util.Set;
  * que genera {@link SeatLayoutFactory} ({tipo, capacidad, pisos[{piso, filas, columnas, celdas[{fila,
  * columna, tipo, asiento?}]}]}), sin campos extra, para que /itineraries/{id}/seatmap y el frontend no cambien.
  * La capacidad es el número de celdas ASIENTO. Cualquier error es 400 INVALID_SEATMAP.
+ *
+ * <p>US-141: una celda ASIENTO puede traer {@code categoria} (ESTANDAR, PREFERENCIAL o PREMIUM); sin ella el
+ * asiento es ESTANDAR y la celda se guarda igual que antes (los mapas existentes no cambian).
  */
 public final class SeatMapValidator {
 
@@ -122,10 +128,22 @@ public final class SeatMapValidator {
                 throw invalido("El número de asiento " + numero + " está repetido");
             }
             out.put("asiento", numero);
-        } else if (tieneAsiento) {
-            throw invalido("Solo las celdas ASIENTO llevan número (" + posicion + ")");
+            JsonNode categoria = celda.get("categoria");
+            if (categoria != null && !categoria.isNull()) {
+                out.put("categoria", categoria(categoria, posicion));
+            }
+        } else if (tieneAsiento || celda.hasNonNull("categoria")) {
+            throw invalido("Solo las celdas ASIENTO llevan número y categoría (" + posicion + ")");
         }
         return out;
+    }
+
+    private static String categoria(JsonNode categoria, String posicion) {
+        String valor = categoria.asText().trim().toUpperCase(Locale.ROOT);
+        if (!categoria.isTextual() || Arrays.stream(CategoriaAsiento.values()).noneMatch(c -> c.name().equals(valor))) {
+            throw invalido("Categoría no válida en " + posicion + ": debe ser ESTANDAR, PREFERENCIAL o PREMIUM");
+        }
+        return valor;
     }
 
     private static int entero(JsonNode node, String campo, int min, int max, String donde) {

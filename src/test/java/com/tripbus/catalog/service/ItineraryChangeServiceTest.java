@@ -4,6 +4,7 @@ import com.tripbus.catalog.client.SeatInventoryClient;
 import com.tripbus.catalog.client.SeatInventoryClient.RemapResult;
 import com.tripbus.catalog.common.error.ApiException;
 import com.tripbus.catalog.common.events.EventPublisher;
+import com.tripbus.catalog.domain.Asiento;
 import com.tripbus.catalog.domain.Bus;
 import com.tripbus.catalog.domain.BusStatus;
 import com.tripbus.catalog.domain.BusType;
@@ -39,7 +40,6 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -53,8 +53,10 @@ class ItineraryChangeServiceTest {
 
     private static final Instant AHORA = Instant.parse("2026-10-24T15:00:00Z");
     private static final UUID USUARIO = UUID.randomUUID();
-    private static final List<String> ASIENTOS_A = List.of("1", "2", "3", "4");
-    private static final List<String> ASIENTOS_B = List.of("1", "2");
+    private static final List<String> NUMEROS_A = List.of("1", "2", "3", "4");
+    private static final List<String> NUMEROS_B = List.of("1", "2");
+    private static final List<Asiento> ASIENTOS_A = NUMEROS_A.stream().map(n -> new Asiento(n, "ESTANDAR")).toList();
+    private static final List<Asiento> ASIENTOS_B = List.of(new Asiento("1", "PREMIUM"), new Asiento("2", "ESTANDAR"));
     private static final java.util.concurrent.atomic.AtomicInteger PLACAS = new java.util.concurrent.atomic.AtomicInteger();
 
     private final ItineraryRepository itineraries = mock(ItineraryRepository.class);
@@ -87,8 +89,8 @@ class ItineraryChangeServiceTest {
         when(busSchedule.lock(busA.getId())).thenReturn(Optional.of(busA));
         when(busSchedule.lock(busB.getId())).thenReturn(Optional.of(busB));
         when(busSchedule.findConflictExcept(any(), any(), any(), any())).thenReturn(Optional.empty());
-        when(itineraryPublisher.seatNumbers(busA)).thenReturn(ASIENTOS_A);
-        when(itineraryPublisher.seatNumbers(busB)).thenReturn(ASIENTOS_B);
+        when(itineraryPublisher.asientos(busA)).thenReturn(ASIENTOS_A);
+        when(itineraryPublisher.asientos(busB)).thenReturn(ASIENTOS_B);
         TransactionSynchronizationManager.initSynchronization();
     }
 
@@ -165,7 +167,7 @@ class ItineraryChangeServiceTest {
     @Test
     @SuppressWarnings("unchecked")
     void cambiarBusReasignaAsientosYPublica() {
-        when(seatInventory.remap(viaje.getId(), ASIENTOS_B, 2)).thenReturn(remap(RemapResult.Status.OK));
+        when(seatInventory.remap(viaje.getId(), ASIENTOS_B)).thenReturn(remap(RemapResult.Status.OK));
 
         var r = service.changeBus(viaje.getId(), new ChangeBusRequest(busB.getId(), "Daño"), empresa.getId(), USUARIO);
 
@@ -173,7 +175,7 @@ class ItineraryChangeServiceTest {
         ArgumentCaptor<Map<String, Object>> payload = ArgumentCaptor.forClass(Map.class);
         verify(events).publishAfterCommit(eq(CatalogEvents.ITINERARY_BUS_CHANGED), payload.capture());
         assertThat(payload.getValue()).containsEntry("busAnterior", busA.getId()).containsEntry("busNuevo", busB.getId())
-                .containsEntry("capacidad", 2).containsEntry("seatNumbers", ASIENTOS_B);
+                .containsEntry("capacidad", 2).containsEntry("seatNumbers", NUMEROS_B);
         ArgumentCaptor<ItineraryChange> cambio = ArgumentCaptor.forClass(ItineraryChange.class);
         verify(changes).save(cambio.capture());
         assertThat(cambio.getValue().getTipo()).isEqualTo(ChangeType.CAMBIO_BUS);
@@ -181,39 +183,39 @@ class ItineraryChangeServiceTest {
 
         // Confirmado: no se compensa.
         sincronizaciones().forEach(s -> s.afterCompletion(TransactionSynchronization.STATUS_COMMITTED));
-        verify(seatInventory, times(1)).remap(any(), anyList(), anyInt());
+        verify(seatInventory, times(1)).remap(any(), anyList());
     }
 
     @Test
     void siLaTransaccionFallaDespuesDelRemapSeCompensaConLosAsientosAnteriores() {
-        when(seatInventory.remap(viaje.getId(), ASIENTOS_B, 2)).thenReturn(remap(RemapResult.Status.OK));
-        when(seatInventory.remap(viaje.getId(), ASIENTOS_A, 4)).thenReturn(remap(RemapResult.Status.OK));
+        when(seatInventory.remap(viaje.getId(), ASIENTOS_B)).thenReturn(remap(RemapResult.Status.OK));
+        when(seatInventory.remap(viaje.getId(), ASIENTOS_A)).thenReturn(remap(RemapResult.Status.OK));
         service.changeBus(viaje.getId(), new ChangeBusRequest(busB.getId(), "Daño"), null, USUARIO);
 
         sincronizaciones().forEach(s -> s.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
-        verify(seatInventory).remap(viaje.getId(), ASIENTOS_A, 4);
+        verify(seatInventory).remap(viaje.getId(), ASIENTOS_A);
     }
 
     @Test
     void siLaCompensacionTambienFallaSoloQuedaEnElLog() {
-        when(seatInventory.remap(viaje.getId(), ASIENTOS_B, 2)).thenReturn(remap(RemapResult.Status.OK));
-        when(seatInventory.remap(viaje.getId(), ASIENTOS_A, 4)).thenReturn(remap(RemapResult.Status.UNAVAILABLE));
+        when(seatInventory.remap(viaje.getId(), ASIENTOS_B)).thenReturn(remap(RemapResult.Status.OK));
+        when(seatInventory.remap(viaje.getId(), ASIENTOS_A)).thenReturn(remap(RemapResult.Status.UNAVAILABLE));
         service.changeBus(viaje.getId(), new ChangeBusRequest(busB.getId(), "Daño"), null, USUARIO);
 
         sincronizaciones().forEach(s -> s.afterCompletion(TransactionSynchronization.STATUS_UNKNOWN));
-        verify(seatInventory).remap(viaje.getId(), ASIENTOS_A, 4);
+        verify(seatInventory).remap(viaje.getId(), ASIENTOS_A);
     }
 
     @Test
     void conflictoDeAsientosOSeatInventoryCaidoNoCambianNada() {
-        when(seatInventory.remap(any(), anyList(), anyInt()))
+        when(seatInventory.remap(any(), anyList()))
                 .thenReturn(new RemapResult(RemapResult.Status.SEATS_CONFLICT, List.of("3", "4")));
         ApiException conflicto = codigo(() -> service.changeBus(viaje.getId(),
                 new ChangeBusRequest(busB.getId(), "x"), null, USUARIO), "SEATS_CONFLICT");
         assertThat(conflicto.getStatus()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(conflicto.getDetails()).containsEntry("asientos", List.of("3", "4"));
 
-        when(seatInventory.remap(any(), anyList(), anyInt())).thenReturn(remap(RemapResult.Status.UNAVAILABLE));
+        when(seatInventory.remap(any(), anyList())).thenReturn(remap(RemapResult.Status.UNAVAILABLE));
         ApiException caido = codigo(() -> service.changeBus(viaje.getId(),
                 new ChangeBusRequest(busB.getId(), "x"), null, USUARIO), "SEAT_INVENTORY_UNAVAILABLE");
         assertThat(caido.getStatus()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
@@ -247,12 +249,12 @@ class ItineraryChangeServiceTest {
         when(busSchedule.findConflictExcept(eq(busB.getId()), any(), any(), any())).thenReturn(Optional.of(UUID.randomUUID()));
         codigo(() -> service.changeBus(viaje.getId(), new ChangeBusRequest(busB.getId(), "x"), null, USUARIO),
                 BusSchedule.CONFLICT);
-        verify(seatInventory, never()).remap(any(), anyList(), anyInt());
+        verify(seatInventory, never()).remap(any(), anyList());
     }
 
     @Test
     void losBusesSeBloqueanEnOrdenDeId() {
-        when(seatInventory.remap(any(), anyList(), anyInt())).thenReturn(remap(RemapResult.Status.OK));
+        when(seatInventory.remap(any(), anyList())).thenReturn(remap(RemapResult.Status.OK));
         service.changeBus(viaje.getId(), new ChangeBusRequest(busB.getId(), "x"), null, USUARIO);
         var orden = org.mockito.Mockito.inOrder(busSchedule);
         UUID primero = busA.getId().compareTo(busB.getId()) < 0 ? busA.getId() : busB.getId();

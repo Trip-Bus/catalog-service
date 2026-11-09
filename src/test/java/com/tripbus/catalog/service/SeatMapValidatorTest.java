@@ -137,6 +137,26 @@ class SeatMapValidatorTest {
         invalido(envolver(piso), BusType.UN_PISO, "al menos un asiento");
     }
 
+    @Test
+    void laCategoriaDelAsientoEsOpcionalYSeNormaliza() {
+        // Sin categoría la celda queda como antes (ESTANDAR implícito); con categoría se guarda en mayúsculas.
+        assertThat(SeatMapValidator.validar(conCelda(c -> c.putNull("categoria")), BusType.UN_PISO).distribucion()
+                .get("pisos").get(0).get("celdas").get(0).has("categoria")).isFalse();
+        JsonNode celda = SeatMapValidator.validar(conCelda(c -> c.put("categoria", " premium ")), BusType.UN_PISO)
+                .distribucion().get("pisos").get(0).get("celdas").get(0);
+        assertThat(celda.get("categoria").asText()).isEqualTo("PREMIUM");
+    }
+
+    @Test
+    void rechazaCategoriasInvalidasOEnCeldasQueNoSonAsiento() {
+        invalido(conCelda(c -> c.put("categoria", "VIP")), BusType.UN_PISO, "Categoría no válida");
+        invalido(conCelda(c -> c.put("categoria", 1)), BusType.UN_PISO, "Categoría no válida");
+        invalido(conCelda(c -> {
+            c.put("tipo", "PASILLO").remove("asiento");
+            c.put("categoria", "PREMIUM");
+        }), BusType.UN_PISO, "Solo las celdas ASIENTO");
+    }
+
     private ObjectNode pisoConUnAsiento(int numero, String asiento) {
         ObjectNode piso = mapper.createObjectNode().put("piso", numero).put("filas", 2).put("columnas", 5);
         piso.putArray("celdas").addObject().put("fila", 1).put("columna", 1).put("tipo", "ASIENTO")

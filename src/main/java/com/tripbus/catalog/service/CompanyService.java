@@ -108,7 +108,8 @@ public class CompanyService {
     public CompanyInternalResponse internal(UUID id, java.time.LocalDate fecha) {
         Company company = find(id);
         var terms = termsService.current(id, fecha == null ? java.time.LocalDate.now(clock.withZone(CatalogTime.ZONE)) : fecha);
-        return new CompanyInternalResponse(company.getId(), company.getNombre(), company.getEstado().name(),
+        return new CompanyInternalResponse(company.getId(), company.getNombre(), company.getNit(),
+                company.getEstado().name(),
                 terms.getComisionPorcentaje(), terms.getCuotaMensual());
     }
 
