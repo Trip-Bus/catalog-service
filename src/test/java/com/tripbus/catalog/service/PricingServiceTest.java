@@ -19,9 +19,10 @@ import com.tripbus.catalog.repository.PassengerTypeFareRepository;
 import com.tripbus.catalog.repository.SeatSurchargeRepository;
 import com.tripbus.catalog.repository.SegmentPriceRepository;
 import com.tripbus.catalog.repository.StopRepository;
+import com.tripbus.catalog.domain.Asiento;
+import com.tripbus.catalog.web.dto.InternalPricing;
+import com.tripbus.catalog.web.dto.InternalPricing.Pasajero;
 import com.tripbus.catalog.web.dto.PriceBreakdown;
-import com.tripbus.catalog.web.dto.PricingRequest;
-import com.tripbus.catalog.web.dto.PricingRequest.Pasajero;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -42,6 +43,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** US-138/US-141: desglose por pasajero con tramo, temporada, tipo de pasajero y categoría de asiento. */
@@ -55,8 +58,9 @@ class PricingServiceTest {
     private final FareSeasonRepository seasons = mock(FareSeasonRepository.class);
     private final PassengerTypeFareRepository passengerTypes = mock(PassengerTypeFareRepository.class);
     private final SeatSurchargeRepository surcharges = mock(SeatSurchargeRepository.class);
+    private final ItineraryPublisher publisher = mock(ItineraryPublisher.class);
     private final PricingService service = new PricingService(itineraries, stops, segmentPrices, seasons,
-            passengerTypes, surcharges, Clock.fixed(AHORA, ZoneOffset.UTC), 30);
+            passengerTypes, surcharges, publisher, Clock.fixed(AHORA, ZoneOffset.UTC), 30);
 
     private Company empresa;
     private Route ruta;
@@ -77,6 +81,8 @@ class PricingServiceTest {
         when(segmentPrices.findByRouteIdAndDesdeOrdenAndHastaOrden(any(), anyInt(), anyInt()))
                 .thenReturn(Optional.empty());
         when(seasons.vigentes(any(), any(), any())).thenReturn(List.of());
+        when(publisher.asientos(bus)).thenReturn(List.of(new Asiento("1", "PREMIUM"), new Asiento("2", "PREFERENCIAL"),
+                new Asiento("3", "ESTANDAR")));
     }
 
     @Test
@@ -157,20 +163,69 @@ class PricingServiceTest {
     }
 
     @Test
-    void internoSumaElRecargoDeLaCategoriaDelAsiento() {
+    void internoConElContratoDeBookingTomaLaCategoriaDelMapaDelBus() {
         when(surcharges.findByCompanyId(empresa.getId())).thenReturn(List.of(
                 new SeatSurcharge(UUID.randomUUID(), empresa.getId(), CategoriaAsiento.PREMIUM, new BigDecimal("10000"))));
+        when(passengerTypes.findByCompanyId(empresa.getId())).thenReturn(List.of(
+                new PassengerTypeFare(UUID.randomUUID(), empresa.getId(), TipoPasajero.NINO, new BigDecimal("20"))));
 
-        PriceBreakdown p = service.cotizar(new PricingRequest(viaje.getId(), null, null, List.of(
-                new Pasajero(TipoPasajero.ADULTO, CategoriaAsiento.PREMIUM),
-                new Pasajero(TipoPasajero.ADULTO, CategoriaAsiento.PREFERENCIAL),
-                new Pasajero(TipoPasajero.NINO, null))));
+        InternalPricing.Response r = service.cotizar(new InternalPricing.Request(viaje.getId(), 2, 4, List.of(
+                new Pasajero("1", "ADULTO"), new Pasajero("2", "nino"), new Pasajero("3", null))));
 
-        assertThat(p.pasajeros()).extracting(PriceBreakdown.PrecioPasajero::recargoCategoria)
+        assertThat(r.estado()).isEqualTo("PROGRAMADO");
+        assertThat(r.moneda()).isEqualTo("COP");
+        assertThat(r.tramo()).isEqualTo(new InternalPricing.Tramo(2, "Honda", 4, "Medellín"));
+        // Tramo Honda → Medellín: 58.100. Niño con 20 %: 46.480 → 46.500 (descuento 11.600). PREMIUM: +10.000.
+        assertThat(r.pasajeros()).extracting(InternalPricing.Precio::asiento).containsExactly("1", "2", "3");
+        assertThat(r.pasajeros()).extracting(InternalPricing.Precio::tipoPasajero)
+                .containsExactly("ADULTO", "NINO", "ADULTO");
+        assertThat(r.pasajeros()).extracting(InternalPricing.Precio::categoriaAsiento)
+                .containsExactly("PREMIUM", "PREFERENCIAL", "ESTANDAR");
+        assertThat(r.pasajeros()).allSatisfy(p -> {
+            assertThat(p.precioBase()).isEqualByComparingTo("58100");
+            assertThat(p.precio()).isEqualByComparingTo(p.precioBase().subtract(p.descuentoTipo()).add(p.recargoCategoria()));
+        });
+        assertThat(r.pasajeros()).extracting(InternalPricing.Precio::precio)
                 .usingComparatorForType(BigDecimal::compareTo, BigDecimal.class)
-                .containsExactly(new BigDecimal("10000"), BigDecimal.ZERO, BigDecimal.ZERO);
-        assertThat(p.pasajeros().get(1).seatCategoria()).isEqualTo("PREFERENCIAL");
-        assertThat(p.total()).isEqualByComparingTo("295000");
+                .containsExactly(new BigDecimal("68100"), new BigDecimal("46500"), new BigDecimal("58100"));
+        assertThat(r.pasajeros().get(1).descuentoTipo()).isEqualByComparingTo("11600");
+        assertThat(r.total()).isEqualByComparingTo("172700");
+    }
+
+    @Test
+    void internoSinTramoEsElRecorridoCompletoYSinAsientoNoLeeElMapa() {
+        InternalPricing.Response r = service.cotizar(new InternalPricing.Request(viaje.getId(), null, null,
+                List.of(new Pasajero(null, ""))));
+
+        assertThat(r.tramo()).isEqualTo(new InternalPricing.Tramo(1, "Bogotá", 4, "Medellín"));
+        assertThat(r.pasajeros()).singleElement().satisfies(p -> {
+            assertThat(p.categoriaAsiento()).isNull();
+            assertThat(p.recargoCategoria()).isEqualByComparingTo("0");
+            assertThat(p.precio()).isEqualByComparingTo("95000");
+        });
+        verify(publisher, never()).asientos(any(Bus.class));
+    }
+
+    @Test
+    void internoNoAplicaLaOfertaActivaPeroElPrecioPublicoSi() {
+        viaje.marcarOferta(UUID.randomUUID(), new BigDecimal("54000"), AHORA.plus(1, ChronoUnit.DAYS));
+
+        InternalPricing.Response r = service.cotizar(new InternalPricing.Request(viaje.getId(), null, null,
+                List.of(new Pasajero("3", "ADULTO"))));
+
+        assertThat(r.pasajeros().get(0).precio()).isEqualByComparingTo("95000");
+        assertThat(service.cotizar(viaje.getId(), null, null, null).total()).isEqualByComparingTo("54000");
+    }
+
+    @Test
+    void internoRechazaAsientosYTiposQueNoExisten() {
+        UUID id = viaje.getId();
+        InternalPricing.Request asiento = new InternalPricing.Request(id, null, null, List.of(new Pasajero("99", null)));
+        assertThatThrownBy(() -> service.cotizar(asiento))
+                .isInstanceOf(ApiException.class).extracting("code").isEqualTo(PricingService.ERROR);
+        InternalPricing.Request tipo = new InternalPricing.Request(id, null, null, List.of(new Pasajero("1", "BEBE")));
+        assertThatThrownBy(() -> service.cotizar(tipo))
+                .isInstanceOf(ApiException.class).extracting("code").isEqualTo(PricingService.ERROR);
     }
 
     @Test
@@ -182,22 +237,22 @@ class PricingServiceTest {
         }
         assertThatThrownBy(() -> service.cotizar(id, null, null, "BEBE"))
                 .isInstanceOf(ApiException.class).extracting("code").isEqualTo(PricingService.ERROR);
-        assertThatThrownBy(() -> service.cotizar(new PricingRequest(id, null, null, List.of())))
+        assertThatThrownBy(() -> service.cotizar(new InternalPricing.Request(id, null, null, List.of())))
                 .isInstanceOf(ApiException.class).extracting("code").isEqualTo(PricingService.ERROR);
-        List<Pasajero> sinTipo = new ArrayList<>();
-        sinTipo.add(new Pasajero(null, null));
-        assertThatThrownBy(() -> service.cotizar(new PricingRequest(id, null, null, sinTipo)))
-                .isInstanceOf(ApiException.class);
         List<Pasajero> nulo = new ArrayList<>();
         nulo.add(null);
-        assertThatThrownBy(() -> service.cotizar(new PricingRequest(id, null, null, nulo)))
+        assertThatThrownBy(() -> service.cotizar(new InternalPricing.Request(id, null, null, nulo)))
                 .isInstanceOf(ApiException.class);
-        List<Pasajero> muchos = Collections.nCopies(PricingService.MAX_PASAJEROS + 1, new Pasajero(TipoPasajero.ADULTO, null));
-        assertThatThrownBy(() -> service.cotizar(new PricingRequest(id, null, null, muchos)))
+        List<Pasajero> muchos = Collections.nCopies(PricingService.MAX_PASAJEROS + 1, new Pasajero(null, null));
+        assertThatThrownBy(() -> service.cotizar(new InternalPricing.Request(id, null, null, muchos)))
                 .isInstanceOf(ApiException.class);
-        assertThatThrownBy(() -> service.cotizar(new PricingRequest(null, null, null, List.of())))
+        assertThatThrownBy(() -> service.cotizar(new InternalPricing.Request(null, null, null, List.of())))
                 .isInstanceOf(ApiException.class);
-        assertThatThrownBy(() -> service.cotizar(new PricingRequest(id, null, null, null)))
+        assertThatThrownBy(() -> service.cotizar(new InternalPricing.Request(id, null, null, null)))
+                .isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> service.cotizar((InternalPricing.Request) null))
+                .isInstanceOf(ApiException.class);
+        assertThatThrownBy(() -> service.cotizar(viaje, null, null, List.of(), true))
                 .isInstanceOf(ApiException.class);
         assertThat(PricingService.tipos(" ")).containsExactly(TipoPasajero.ADULTO);
     }
@@ -209,10 +264,10 @@ class PricingServiceTest {
         assertThatThrownBy(() -> service.cotizar(otro, null, null, null))
                 .isInstanceOf(ApiException.class).extracting("code").isEqualTo("ITINERARY_NOT_FOUND");
 
+        // Un viaje cancelado se cotiza con estado CANCELADO: booking responde 409 ITINERARY_NOT_AVAILABLE.
         viaje.cancelar();
-        List<Pasajero> uno = List.of(new Pasajero(TipoPasajero.ADULTO, null));
-        assertThatThrownBy(() -> service.cotizar(new PricingRequest(viaje.getId(), null, null, uno)))
-                .isInstanceOf(ApiException.class).extracting("code").isEqualTo("ITINERARY_CANCELLED");
+        assertThat(service.cotizar(new InternalPricing.Request(viaje.getId(), null, null,
+                List.of(new Pasajero("1", "ADULTO")))).estado()).isEqualTo("CANCELADO");
         assertThat(service.minPorcentaje()).isEqualTo(30);
     }
 

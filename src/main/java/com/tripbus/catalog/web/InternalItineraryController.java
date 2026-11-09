@@ -3,8 +3,7 @@ package com.tripbus.catalog.web;
 import com.tripbus.catalog.service.InternalItineraryService;
 import com.tripbus.catalog.service.PricingService;
 import com.tripbus.catalog.web.dto.InternalItinerary;
-import com.tripbus.catalog.web.dto.PriceBreakdown;
-import com.tripbus.catalog.web.dto.PricingRequest;
+import com.tripbus.catalog.web.dto.InternalPricing;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -42,7 +41,7 @@ public class InternalItineraryController {
     }
 
     @PostMapping("/internal/pricing")
-    public PriceBreakdown pricing(@RequestBody PricingRequest request) {
+    public InternalPricing.Response pricing(@RequestBody InternalPricing.Request request) {
         return pricingService.cotizar(request);
     }
 }

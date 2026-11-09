@@ -310,12 +310,39 @@ class Sprint6IT {
                 .andExpect(jsonPath("$[2].categoria").value("PREMIUM")).andExpect(jsonPath("$[2].recargo").value(10000));
         UUID viaje = primerViaje("Medellín", "Cartagena");
 
+        // Contrato de booking: por pasajero su asiento y su tipo. La categoría sale del mapa real del bus: un bus
+        // nuevo de CARIBE con el asiento 1 PREMIUM, en la misma ruta y con el mismo precio base.
+        String rutaId = json(mockMvc.perform(get("/itineraries/{id}", viaje))).get("routeId").asText();
+        String mapa = """
+                {"pisos":[{"piso":1,"filas":2,"columnas":3,"celdas":[
+                  {"fila":0,"columna":1,"tipo":"CONDUCTOR"},
+                  {"fila":1,"columna":1,"tipo":"ASIENTO","asiento":"1","categoria":"PREMIUM"},
+                  {"fila":1,"columna":2,"tipo":"PASILLO"},
+                  {"fila":1,"columna":3,"tipo":"ASIENTO","asiento":"2"}]}]}""";
+        JsonNode bus = json(mockMvc.perform(post("/buses").with(operador(CARIBE)).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"placa\":\"PRC001\",\"tipo\":\"UN_PISO\",\"distribucion\":%s}".formatted(mapa)))
+                .andExpect(status().isCreated()));
+        String propio = json(mockMvc.perform(post("/itineraries").with(operador(CARIBE))
+                        .contentType(MediaType.APPLICATION_JSON).content("""
+                                {"routeId":"%s","busId":"%s","fechaSalida":"%s","precioBase":140000}"""
+                                .formatted(rutaId, bus.get("id").asText(),
+                                        Instant.now().plus(45, ChronoUnit.DAYS).truncatedTo(ChronoUnit.MINUTES))))
+                .andExpect(status().isCreated())).get("itineraryId").asText();
         mockMvc.perform(interno(post("/internal/pricing")).contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"itineraryId":"%s","pasajeros":[{"tipo":"ADULTO","seatCategoria":"PREMIUM"},
-                                {"tipo":"ADULTO","seatCategoria":"ESTANDAR"}]}""".formatted(viaje)))
+                                {"itineraryId":"%s","pasajeros":[{"asiento":"1","tipoPasajero":"ADULTO"},
+                                {"asiento":"2","tipoPasajero":null}]}""".formatted(propio)))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.estado").value("PROGRAMADO"))
+                .andExpect(jsonPath("$.moneda").value("COP"))
+                .andExpect(jsonPath("$.tramo.fromOrden").value(1))
+                .andExpect(jsonPath("$.pasajeros[0].asiento").value("1"))
+                .andExpect(jsonPath("$.pasajeros[0].categoriaAsiento").value("PREMIUM"))
+                .andExpect(jsonPath("$.pasajeros[0].recargoCategoria").value(10000))
                 .andExpect(jsonPath("$.pasajeros[0].precio").value(150000))
+                .andExpect(jsonPath("$.pasajeros[1].tipoPasajero").value("ADULTO"))
+                .andExpect(jsonPath("$.pasajeros[1].categoriaAsiento").value("ESTANDAR"))
+                .andExpect(jsonPath("$.pasajeros[1].descuentoTipo").value(0))
                 .andExpect(jsonPath("$.pasajeros[1].precio").value(140000))
                 .andExpect(jsonPath("$.total").value(290000));
         mockMvc.perform(post("/internal/pricing").contentType(MediaType.APPLICATION_JSON).content("{}"))
