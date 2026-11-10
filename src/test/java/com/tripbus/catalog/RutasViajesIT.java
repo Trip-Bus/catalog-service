@@ -23,6 +23,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Range;
+import org.springframework.data.redis.connection.Limit;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -294,7 +295,11 @@ class RutasViajesIT {
         assertThat(payload.get("companyId").asText()).isEqualTo(empresa.toString());
         assertThat(payload.get("tipoBus").asText()).isEqualTo("UN_PISO");
         assertThat(payload.fieldNames()).toIterable().containsExactly("itineraryId", "routeId", "busId", "companyId",
-                "origen", "destino", "fechaSalida", "fechaLlegada", "precioBase", "tipoBus", "capacidad", "seatNumbers");
+                "origen", "destino", "fechaSalida", "fechaLlegada", "precioBase", "tipoBus", "capacidad", "seatNumbers",
+                "seats");
+        // US-141: seats agrega la categoría de cada asiento (el mapa no la trae, así que son ESTANDAR).
+        assertThat(payload.get("seats")).extracting(s -> s.get("numero").asText() + ":" + s.get("categoria").asText())
+                .containsExactly("1:ESTANDAR", "2:ESTANDAR", "3:ESTANDAR");
     }
 
     @Test
@@ -644,7 +649,11 @@ class RutasViajesIT {
     /** Eventos del stream cuyo payload tiene campo == valor, en orden de publicación. */
     private List<JsonNode> eventos(String campo, String valor) throws Exception {
         List<JsonNode> eventos = new ArrayList<>();
-        for (var r : redisTemplate.opsForStream().range(stream, Range.unbounded())) {
+        // Solo los últimos eventos: el seed deja miles en el stream y leerlo entero puede exceder el timeout de Redis.
+        var recientes = new ArrayList<>(redisTemplate.opsForStream()
+                .reverseRange(stream, Range.unbounded(), Limit.limit().count(500)));
+        Collections.reverse(recientes);
+        for (var r : recientes) {
             JsonNode payload = objectMapper.readTree(String.valueOf(r.getValue().get("payload")));
             if (valor.equals(payload.path(campo).asText())) {
                 ObjectNode e = objectMapper.createObjectNode().put("type", String.valueOf(r.getValue().get("type")));

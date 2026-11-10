@@ -3,6 +3,7 @@ package com.tripbus.catalog.service;
 import com.tripbus.catalog.client.SeatInventoryClient;
 import com.tripbus.catalog.common.error.ApiException;
 import com.tripbus.catalog.common.events.EventPublisher;
+import com.tripbus.catalog.domain.Asiento;
 import com.tripbus.catalog.domain.Bus;
 import com.tripbus.catalog.domain.BusStatus;
 import com.tripbus.catalog.domain.ChangeType;
@@ -174,8 +175,8 @@ public class ItineraryChangeService {
                     throw BusSchedule.conflictError(choque);
                 });
 
-        List<String> asientosNuevos = itineraryPublisher.seatNumbers(nuevo);
-        List<String> asientosAnteriores = itineraryPublisher.seatNumbers(anterior);
+        List<Asiento> asientosNuevos = itineraryPublisher.asientos(nuevo);
+        List<Asiento> asientosAnteriores = itineraryPublisher.asientos(anterior);
         reasignarAsientos(itinerary.getId(), asientosNuevos);
         compensarSiFalla(itinerary.getId(), asientosAnteriores);
 
@@ -189,7 +190,8 @@ public class ItineraryChangeService {
         payload.put("busAnterior", anterior.getId());
         payload.put("busNuevo", nuevo.getId());
         payload.put("capacidad", asientosNuevos.size());
-        payload.put("seatNumbers", asientosNuevos);
+        payload.put("seatNumbers", ItineraryPublisher.numeros(asientosNuevos));
+        payload.put("seats", ItineraryPublisher.seats(asientosNuevos));
         eventPublisher.publishAfterCommit(CatalogEvents.ITINERARY_BUS_CHANGED, payload);
         searchCache.evictAll();
         return ItinerarySummary.from(itinerary);
@@ -262,8 +264,8 @@ public class ItineraryChangeService {
         return buses;
     }
 
-    private void reasignarAsientos(UUID itineraryId, List<String> asientos) {
-        SeatInventoryClient.RemapResult r = seatInventoryClient.remap(itineraryId, asientos, asientos.size());
+    private void reasignarAsientos(UUID itineraryId, List<Asiento> asientos) {
+        SeatInventoryClient.RemapResult r = seatInventoryClient.remap(itineraryId, asientos);
         switch (r.status()) {
             case SEATS_CONFLICT -> throw new ApiException(HttpStatus.CONFLICT, "SEATS_CONFLICT",
                     "Hay asientos vendidos o retenidos que no existen en el bus nuevo",
@@ -275,7 +277,7 @@ public class ItineraryChangeService {
     }
 
     /** Si la transacción de Catalog no llega a confirmarse, devuelve en Seat Inventory los asientos del bus anterior. */
-    private void compensarSiFalla(UUID itineraryId, List<String> asientosAnteriores) {
+    private void compensarSiFalla(UUID itineraryId, List<Asiento> asientosAnteriores) {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCompletion(int status) {
@@ -284,8 +286,7 @@ public class ItineraryChangeService {
                 }
                 log.error("El cambio de bus del viaje {} no se guardó después de reasignar sus asientos en Seat "
                         + "Inventory; se compensa con los asientos del bus anterior", itineraryId);
-                SeatInventoryClient.RemapResult r =
-                        seatInventoryClient.remap(itineraryId, asientosAnteriores, asientosAnteriores.size());
+                SeatInventoryClient.RemapResult r = seatInventoryClient.remap(itineraryId, asientosAnteriores);
                 if (r.status() != SeatInventoryClient.RemapResult.Status.OK) {
                     log.error("No se pudo compensar en Seat Inventory el viaje {} ({}): quedó con los asientos del "
                             + "bus nuevo y hay que corregirlo a mano", itineraryId, r.status());

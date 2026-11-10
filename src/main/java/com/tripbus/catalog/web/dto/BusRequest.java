@@ -1,5 +1,8 @@
 package com.tripbus.catalog.web.dto;
 
+import java.util.Set;
+import io.swagger.v3.oas.annotations.media.Schema;
+import com.tripbus.catalog.domain.ServicioBus;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.tripbus.catalog.domain.BusType;
 import jakarta.validation.constraints.NotBlank;
@@ -19,7 +22,9 @@ public record BusRequest(
         @NotNull(message = "El tipo es obligatorio (UN_PISO o DOS_PISOS)")
         BusType tipo,
         UUID companyId,
-        JsonNode distribucion) {
+        JsonNode distribucion,
+        @Schema(description = "US-113: servicios a bordo (opcional): WIFI, BANO, USB, AIRE_ACONDICIONADO, TV, SILLA_RECLINABLE")
+        Set<ServicioBus> servicios) {
 
     public static final String PLACA_REGEX = "^[A-Za-z]{3}[0-9]{3}$";
 }

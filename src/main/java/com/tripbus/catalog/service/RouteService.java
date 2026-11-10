@@ -10,6 +10,7 @@ import com.tripbus.catalog.events.CatalogEvents;
 import com.tripbus.catalog.repository.ItineraryRepository;
 import com.tripbus.catalog.repository.RouteRepository;
 import com.tripbus.catalog.repository.StopRepository;
+import com.tripbus.catalog.repository.TerminalRepository;
 import com.tripbus.catalog.web.dto.PageResponse;
 import com.tripbus.catalog.web.dto.RouteRequest;
 import com.tripbus.catalog.web.dto.RouteResponse;
@@ -20,6 +21,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
+import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
@@ -27,6 +29,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -42,6 +45,7 @@ public class RouteService {
     private final CompanyService companyService;
     private final EventPublisher eventPublisher;
     private final SearchCache searchCache;
+    private final TerminalRepository terminalRepository;
     private final Clock clock;
 
     public RouteService(
@@ -51,6 +55,7 @@ public class RouteService {
             CompanyService companyService,
             EventPublisher eventPublisher,
             SearchCache searchCache,
+            TerminalRepository terminalRepository,
             Clock clock) {
         this.routeRepository = routeRepository;
         this.stopRepository = stopRepository;
@@ -58,6 +63,7 @@ public class RouteService {
         this.companyService = companyService;
         this.eventPublisher = eventPublisher;
         this.searchCache = searchCache;
+        this.terminalRepository = terminalRepository;
         this.clock = clock;
     }
 
@@ -66,6 +72,7 @@ public class RouteService {
         UUID companyId = CompanyService.resolveCompany(request.companyId(), companyScope);
         Company company = companyService.requireActive(companyId);
         int duracion = RouteValidator.validar(request.origen(), request.destino(), request.paradas());
+        validarTerminales(request.paradas());
         Route route = routeRepository.save(new Route(UUID.randomUUID(), company, request.origen().trim(),
                 request.destino().trim(), duracion));
         List<Stop> paradas = guardarParadas(route, request.paradas());
@@ -111,6 +118,7 @@ public class RouteService {
         Route route = find(id, companyScope);
         CompanyService.requireActive(route.getCompany());
         int duracion = RouteValidator.validar(request.origen(), request.destino(), request.paradas());
+        validarTerminales(request.paradas());
         return reemplazar(route, request.origen().trim(), request.destino().trim(), duracion, request.paradas());
     }
 
@@ -120,6 +128,7 @@ public class RouteService {
         Route route = find(id, companyScope);
         CompanyService.requireActive(route.getCompany());
         int duracion = RouteValidator.validar(route.getOrigen(), route.getDestino(), paradas);
+        validarTerminales(paradas);
         return reemplazar(route, route.getOrigen(), route.getDestino(), duracion, paradas);
     }
 
@@ -163,18 +172,33 @@ public class RouteService {
             Stop a = actuales.get(i);
             StopRequest n = nuevas.get(i);
             if (!a.getNombre().equals(n.nombre().trim()) || Double.compare(a.getLat(), n.lat()) != 0
-                    || Double.compare(a.getLng(), n.lng()) != 0 || a.getMinutosDesdeSalida() != n.minutosDesdeSalida()) {
+                    || Double.compare(a.getLng(), n.lng()) != 0 || a.getMinutosDesdeSalida() != n.minutosDesdeSalida()
+                    || !Objects.equals(a.getTerminalId(), n.terminalId())) {
                 return false;
             }
         }
         return true;
     }
 
+    /** US-115: la terminal de cada parada (opcional) debe existir; si no, 400 INVALID_ROUTE paradas[i].terminalId. */
+    private void validarTerminales(List<StopRequest> paradas) {
+        Map<String, Object> errores = new LinkedHashMap<>();
+        for (int i = 0; i < paradas.size(); i++) {
+            UUID terminalId = paradas.get(i).terminalId();
+            if (terminalId != null && !terminalRepository.existsById(terminalId)) {
+                errores.put("paradas[" + i + "].terminalId", "La terminal no existe");
+            }
+        }
+        if (!errores.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, RouteValidator.ERROR, "La ruta no es válida", errores);
+        }
+    }
+
     private List<Stop> guardarParadas(Route route, List<StopRequest> paradas) {
         List<Stop> stops = new ArrayList<>();
         for (StopRequest p : paradas) {
             stops.add(new Stop(UUID.randomUUID(), route.getId(), p.orden(), p.nombre().trim(), p.lat(), p.lng(),
-                    p.minutosDesdeSalida()));
+                    p.minutosDesdeSalida(), p.terminalId()));
         }
         return stopRepository.saveAll(stops);
     }
@@ -188,7 +212,7 @@ public class RouteService {
     private static List<StopResponse> toResponse(List<Stop> paradas) {
         return paradas.stream()
                 .map(s -> new StopResponse(s.getId(), s.getOrden(), s.getNombre(), s.getLat(), s.getLng(),
-                        s.getMinutosDesdeSalida(), null))
+                        s.getMinutosDesdeSalida(), null, s.getTerminalId()))
                 .toList();
     }
 
@@ -208,6 +232,7 @@ public class RouteService {
             p.put("lat", s.getLat());
             p.put("lng", s.getLng());
             p.put("minutosDesdeSalida", s.getMinutosDesdeSalida());
+            p.put("terminalId", s.getTerminalId());
             return p;
         }).toList());
         return payload;

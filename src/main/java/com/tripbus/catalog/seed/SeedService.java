@@ -7,6 +7,7 @@ import com.tripbus.catalog.domain.BusType;
 import com.tripbus.catalog.domain.Company;
 import com.tripbus.catalog.domain.Itinerary;
 import com.tripbus.catalog.domain.Route;
+import com.tripbus.catalog.domain.ServicioBus;
 import com.tripbus.catalog.domain.SeatMap;
 import com.tripbus.catalog.domain.Stop;
 import com.tripbus.catalog.repository.BusRepository;
@@ -36,6 +37,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -186,7 +188,11 @@ public class SeedService {
 
     private Bus busDelSeed(UUID busId, Company company, String placa, BusType tipo, List<Bus> creados) {
         return busRepository.findById(busId).orElseGet(() -> {
-            Bus bus = busRepository.save(new Bus(busId, company.getId(), placa, tipo, SeatLayoutFactory.capacidad(tipo)));
+            Bus nuevo = new Bus(busId, company.getId(), placa, tipo, SeatLayoutFactory.capacidad(tipo));
+            // US-113: servicios de demostración según el tipo de bus.
+            nuevo.cambiarServicios(tipo == BusType.DOS_PISOS ? EnumSet.allOf(ServicioBus.class)
+                    : EnumSet.of(ServicioBus.WIFI, ServicioBus.BANO, ServicioBus.AIRE_ACONDICIONADO), clock.instant());
+            Bus bus = busRepository.save(nuevo);
             seatMapRepository.save(new SeatMap(id("seatmap:" + busId), busId, toJson(SeatLayoutFactory.layout(tipo))));
             creados.add(bus);
             return bus;

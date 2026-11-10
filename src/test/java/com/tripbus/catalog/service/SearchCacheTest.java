@@ -2,6 +2,7 @@ package com.tripbus.catalog.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.tripbus.catalog.web.dto.CalendarDay;
 import com.tripbus.catalog.web.dto.TripSearchResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,27 +47,44 @@ class SearchCacheTest {
     @Test
     void guardaYLeeLosResultados() throws Exception {
         List<TripSearchResult> resultados = List.of(resultado());
-        cache.put("bogota", "medellin", FECHA, resultados);
-        verify(ops).set(eq("catalog:search:v1:bogota:medellin:2026-11-01"), anyString(), eq(Duration.ofSeconds(45)));
+        cache.put("bogota", "medellin", FECHA, "AUTO", resultados);
+        verify(ops).set(eq("catalog:search:v2:bogota:medellin:2026-11-01:AUTO"), anyString(), eq(Duration.ofSeconds(45)));
 
-        when(ops.get("catalog:search:v1:bogota:medellin:2026-11-01")).thenReturn(mapper.writeValueAsString(resultados));
-        assertThat(cache.get("bogota", "medellin", FECHA)).contains(resultados);
+        when(ops.get("catalog:search:v2:bogota:medellin:2026-11-01:AUTO"))
+                .thenReturn(mapper.writeValueAsString(resultados));
+        assertThat(cache.get("bogota", "medellin", FECHA, "AUTO")).contains(resultados);
+        // Otro modo es otra entrada.
+        assertThat(cache.get("bogota", "medellin", FECHA, "TODOS")).isEmpty();
+    }
+
+    @Test
+    void guardaYLeeElCalendarioPor60Segundos() throws Exception {
+        List<CalendarDay> dias = List.of(new CalendarDay(FECHA, new BigDecimal("95000"), 5, true),
+                new CalendarDay(FECHA.plusDays(1), null, 0, false));
+        cache.putCalendar("bogota", "medellin", FECHA, 2, dias);
+        verify(ops).set(eq("catalog:calendar:v1:bogota:medellin:2026-11-01:2"), anyString(), eq(Duration.ofSeconds(60)));
+
+        when(ops.get("catalog:calendar:v1:bogota:medellin:2026-11-01:2")).thenReturn(mapper.writeValueAsString(dias));
+        assertThat(cache.getCalendar("bogota", "medellin", FECHA, 2)).contains(dias);
+        assertThat(cache.getCalendar("bogota", "medellin", FECHA, 3)).isEmpty();
     }
 
     @Test
     void sinEntradaORedisCaidoNoHayCache() {
-        assertThat(cache.get("bogota", "cali", FECHA)).isEmpty();
+        assertThat(cache.get("bogota", "cali", FECHA, "AUTO")).isEmpty();
         when(ops.get(anyString())).thenThrow(new RedisConnectionFailureException("caído"));
-        assertThat(cache.get("bogota", "cali", FECHA)).isEmpty();
+        assertThat(cache.get("bogota", "cali", FECHA, "AUTO")).isEmpty();
         doThrow(new RedisConnectionFailureException("caído")).when(ops).set(anyString(), anyString(), any(Duration.class));
-        cache.put("bogota", "cali", FECHA, List.of());
+        cache.put("bogota", "cali", FECHA, "AUTO", List.of());
     }
 
     @Test
     void invalidaTodasLasBusquedas() {
-        when(redis.keys("catalog:search:v1:*")).thenReturn(Set.of("a", "b"));
+        when(redis.keys("catalog:search:v2:*")).thenReturn(Set.of("a", "b"));
+        when(redis.keys("catalog:calendar:v1:*")).thenReturn(Set.of("c"));
         cache.evictAll();
         verify(redis).delete(Set.of("a", "b"));
+        verify(redis).delete(Set.of("c"));
     }
 
     @Test

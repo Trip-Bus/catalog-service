@@ -6,6 +6,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tripbus.catalog.common.security.InternalTokenFilter;
 import com.tripbus.catalog.config.RequestIdPropagationInterceptor;
 import com.tripbus.catalog.config.ServiceUrls;
+import com.tripbus.catalog.domain.Asiento;
+import com.tripbus.catalog.service.ItineraryPublisher;
+import io.micrometer.observation.ObservationRegistry;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -31,6 +36,7 @@ import java.util.stream.Collectors;
  * Disponibilidad de asientos: Catalog NO la guarda, la consulta a Seat Inventory (regla del doc).
  * Timeout corto: si Seat Inventory no responde, la búsqueda sigue funcionando sin ese dato.
  * También reasigna los asientos de un viaje cuando cambia de bus (US-119).
+ * HT-10: con el ObservationRegistry de Boot cada llamada es un span hijo y envía el {@code traceparent}.
  */
 @Component
 public class SeatInventoryClient {
@@ -43,7 +49,13 @@ public class SeatInventoryClient {
     private final RestClient restClient;
     private final String internalToken;
 
-    public SeatInventoryClient(ServiceUrls urls, @Value("${tripbus.internal-token}") String internalToken) {
+    @Autowired
+    public SeatInventoryClient(ServiceUrls urls, @Value("${tripbus.internal-token}") String internalToken,
+                               ObjectProvider<ObservationRegistry> observations) {
+        this(urls, internalToken, observations.getIfAvailable(() -> ObservationRegistry.NOOP));
+    }
+
+    public SeatInventoryClient(ServiceUrls urls, String internalToken, ObservationRegistry observations) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(300);
         factory.setReadTimeout(500);
@@ -51,6 +63,7 @@ public class SeatInventoryClient {
                 .baseUrl(urls.seatInventoryUrl())
                 .requestFactory(factory)
                 .requestInterceptor(new RequestIdPropagationInterceptor())
+                .observationRegistry(observations)
                 .build();
         this.internalToken = internalToken;
     }
@@ -128,12 +141,13 @@ public class SeatInventoryClient {
     /**
      * US-119: el viaje pasa a un bus con estos asientos. Solo una respuesta 2xx es éxito; un 409 trae los
      * asientos vendidos o retenidos que no existen en el bus nuevo; cualquier otra respuesta o un timeout es
-     * "no disponible" (Catalog no cambia nada).
+     * "no disponible" (Catalog no cambia nada). US-141: envía seats [{numero, categoria}] además de seatNumbers.
      */
-    public RemapResult remap(UUID itineraryId, List<String> seatNumbers, int capacidad) {
+    public RemapResult remap(UUID itineraryId, List<Asiento> asientos) {
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("seatNumbers", seatNumbers);
-        body.put("capacidad", capacidad);
+        body.put("seatNumbers", ItineraryPublisher.numeros(asientos));
+        body.put("seats", ItineraryPublisher.seats(asientos));
+        body.put("capacidad", asientos.size());
         try {
             restClient.post()
                     .uri("/internal/itineraries/{id}/remap", itineraryId)

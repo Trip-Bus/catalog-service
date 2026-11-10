@@ -19,6 +19,9 @@ public interface RouteRepository extends JpaRepository<Route, UUID>, JpaSpecific
     @Query("select distinct r.destino from Route r where r.estado = com.tripbus.catalog.domain.RouteStatus.ACTIVA")
     List<String> findDestinos();
 
+    /** US-138: hay al menos una ruta directa entre las dos ciudades (normalizadas). */
+    boolean existsByOrigenNormAndDestinoNorm(String origenNorm, String destinoNorm);
+
     @EntityGraph(attributePaths = "company")
     @Query("select r from Route r where r.id = :id")
     Optional<Route> findWithCompany(@Param("id") UUID id);

@@ -14,6 +14,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -37,6 +38,27 @@ public interface ItineraryRepository extends JpaRepository<Itinerary, UUID>, Jpa
     List<Itinerary> search(
             @Param("origen") String origen,
             @Param("destino") String destino,
+            @Param("desde") Instant desde,
+            @Param("hasta") Instant hasta);
+
+    /**
+     * US-138: viajes PROGRAMADO de empresas ACTIVA de las rutas dadas que salen en [desde, hasta). Para la
+     * búsqueda por tramo (el llamador amplía el intervalo con los minutos hasta la parada de origen).
+     */
+    @Query("""
+            select i from Itinerary i
+              join fetch i.route r
+              join fetch r.company c
+              join fetch i.bus
+            where r.id in :routeIds
+              and c.estado = com.tripbus.catalog.domain.CompanyStatus.ACTIVA
+              and i.estado = com.tripbus.catalog.domain.ItineraryStatus.PROGRAMADO
+              and i.fechaSalida >= :desde
+              and i.fechaSalida < :hasta
+            order by i.fechaSalida asc
+            """)
+    List<Itinerary> searchByRoutes(
+            @Param("routeIds") Collection<UUID> routeIds,
             @Param("desde") Instant desde,
             @Param("hasta") Instant hasta);
 
