@@ -2,6 +2,7 @@ package com.tripbus.catalog.common.events;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tripbus.catalog.common.observability.TracePropagation;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.SmartLifecycle;
@@ -30,6 +31,7 @@ import java.util.UUID;
  * procesa UNA réplica del servicio). Idempotente por eventId (tabla processed_events).
  * Si un manejador falla se reintenta 3 veces; después se registra el error y se confirma
  * (ack) para no bloquear el stream (dead-letter por log en el MVP).
+ * HT-10: cada evento se procesa en un span hijo del {@code traceparent} con el que se publicó.
  */
 @Component
 public class EventConsumer implements SmartLifecycle {
@@ -43,6 +45,7 @@ public class EventConsumer implements SmartLifecycle {
     private final EventProperties properties;
     private final TransactionTemplate transactionTemplate;
     private final ProcessedEventRepository processedEvents;
+    private final TracePropagation tracing;
     private final Map<String, DomainEventHandler> handlersByType = new HashMap<>();
     private final String consumerName = "c-" + UUID.randomUUID().toString().substring(0, 8);
 
@@ -56,13 +59,15 @@ public class EventConsumer implements SmartLifecycle {
             EventProperties properties,
             TransactionTemplate transactionTemplate,
             ProcessedEventRepository processedEvents,
-            List<DomainEventHandler> handlers) {
+            List<DomainEventHandler> handlers,
+            TracePropagation tracing) {
         this.connectionFactory = connectionFactory;
         this.redis = redis;
         this.objectMapper = objectMapper;
         this.properties = properties;
         this.transactionTemplate = transactionTemplate;
         this.processedEvents = processedEvents;
+        this.tracing = tracing;
         for (DomainEventHandler handler : handlers) {
             for (String type : handler.eventTypes()) {
                 handlersByType.put(type, handler);
@@ -97,13 +102,25 @@ public class EventConsumer implements SmartLifecycle {
     }
 
     private void onPollError(Throwable t) {
-        String message = String.valueOf(t.getMessage());
-        if (message.contains("NOGROUP")) {
+        // Lettuce envuelve el error de Redis ("Error in execution" -> "NOGROUP ..."): se busca en las causas.
+        if (mentions(t, "NOGROUP")) {
             ensureGroup();
         } else {
-            log.warn("Error leyendo el stream de eventos: {}", message);
+            log.warn("Error leyendo el stream de eventos: {}", t.getMessage());
             sleepQuietly(1000);
         }
+    }
+
+    /** true si el mensaje de la excepción o de alguna de sus causas contiene el texto. */
+    static boolean mentions(Throwable t, String text) {
+        Throwable c = t;
+        do {
+            if (String.valueOf(c.getMessage()).contains(text)) {
+                return true;
+            }
+            c = c.getCause();
+        } while (c != null);
+        return false;
     }
 
     private void ensureGroup() {
@@ -113,8 +130,7 @@ public class EventConsumer implements SmartLifecycle {
                     connection.streamCommands().xGroupCreate(key, properties.group(), ReadOffset.from("0-0"), true));
             log.info("Consumer group '{}' creado en {}", properties.group(), properties.stream());
         } catch (Exception e) {
-            if (!String.valueOf(e.getMessage()).contains("BUSYGROUP")
-                    && !(e.getCause() != null && String.valueOf(e.getCause().getMessage()).contains("BUSYGROUP"))) {
+            if (!mentions(e, "BUSYGROUP")) {
                 log.warn("No se pudo crear el consumer group '{}': {}", properties.group(), e.getMessage());
             }
         }
@@ -126,27 +142,34 @@ public class EventConsumer implements SmartLifecycle {
         DomainEventHandler handler = handlersByType.get(type);
         if (handler != null) {
             EventEnvelope envelope = toEnvelope(fields);
-            for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-                try {
-                    transactionTemplate.executeWithoutResult(status -> {
-                        if (processedEvents.existsById(envelope.eventId())) {
-                            return;
-                        }
-                        handler.handle(envelope);
-                        processedEvents.save(new ProcessedEvent(envelope.eventId(), type));
-                    });
-                    break;
-                } catch (Exception e) {
-                    if (attempt == MAX_ATTEMPTS) {
-                        log.error("Evento {} ({}) descartado tras {} intentos: {}",
-                                envelope.eventId(), type, MAX_ATTEMPTS, e.getMessage(), e);
-                    } else {
-                        sleepQuietly(200L * attempt);
+            // HT-10: como hijo de la traza de quien publicó (traceparent del evento), con el itineraryId en el MDC.
+            tracing.enSpan("evento." + type, fields.get(TracePropagation.CAMPO),
+                    envelope.payload().path("itineraryId").asText(null), () -> handle(handler, envelope));
+        }
+        redis.opsForStream().acknowledge(properties.stream(), properties.group(), record.getId());
+    }
+
+    private void handle(DomainEventHandler handler, EventEnvelope envelope) {
+        String type = envelope.type();
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            try {
+                transactionTemplate.executeWithoutResult(status -> {
+                    if (processedEvents.existsById(envelope.eventId())) {
+                        return;
                     }
+                    handler.handle(envelope);
+                    processedEvents.save(new ProcessedEvent(envelope.eventId(), type));
+                });
+                return;
+            } catch (Exception e) {
+                if (attempt == MAX_ATTEMPTS) {
+                    log.error("Evento {} ({}) descartado tras {} intentos: {}",
+                            envelope.eventId(), type, MAX_ATTEMPTS, e.getMessage(), e);
+                } else {
+                    sleepQuietly(200L * attempt);
                 }
             }
         }
-        redis.opsForStream().acknowledge(properties.stream(), properties.group(), record.getId());
     }
 
     private EventEnvelope toEnvelope(Map<String, String> fields) {

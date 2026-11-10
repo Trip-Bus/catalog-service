@@ -35,6 +35,21 @@ public final class CurrentUser {
         return null;
     }
 
+    /**
+     * Empresa a la que se limita la petición: null para el ADMIN (todas), la del claim companyId para el
+     * OPERADOR. Un operador sin empresa en el token no puede gestionar nada (403).
+     */
+    public static UUID companyScope(Authentication authentication) {
+        if (hasRole(authentication, "ADMIN")) {
+            return null;
+        }
+        UUID companyId = companyId(authentication);
+        if (companyId == null) {
+            throw ApiException.forbidden("FORBIDDEN", "El operador no tiene una empresa asignada");
+        }
+        return companyId;
+    }
+
     public static boolean hasRole(Authentication authentication, String role) {
         return authentication != null && authentication.getAuthorities().stream()
                 .anyMatch(a -> a.getAuthority().equals("ROLE_" + role));

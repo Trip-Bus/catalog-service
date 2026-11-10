@@ -13,25 +13,57 @@ import org.springframework.security.config.annotation.web.configurers.AbstractHt
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import java.util.List;
+import java.util.Arrays;
 
 @Configuration
 @EnableMethodSecurity
 public class SecurityConfig {
 
     @Bean
+    public CorsConfigurationSource corsConfigurationSource(
+            @Value("${tripbus.cors.allowed-origins:http://localhost:18000,http://localhost:3000,http://localhost:5173}")
+            String allowedOrigins) {
+        CorsConfiguration cors = new CorsConfiguration();
+        cors.setAllowedOrigins(Arrays.stream(allowedOrigins.split(","))
+                .map(String::trim)
+                .filter(origin -> !origin.isEmpty())
+                .toList());
+        cors.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
+        cors.setAllowedHeaders(List.of("*"));
+        cors.setExposedHeaders(List.of("X-Total-Count"));
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", cors);
+        return source;
+    }
+
+    @Bean
     public SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             JsonSecurityHandlers handlers,
+            CorsConfigurationSource corsConfigurationSource,
             @Value("${tripbus.internal-token}") String internalToken) throws Exception {
+        // CSRF no aplica: la API es sin estado (sin sesión ni cookies) y se autentica con el JWT del header
+        // Authorization o con X-Internal-Token, que el navegador nunca adjunta solo a una petición de otro sitio.
+        // Con CSRF activo, todo POST/PUT/PATCH con bearer token respondería 403.
         http
-                .csrf(AbstractHttpConfigurer::disable)
+                .cors(cors -> cors.configurationSource(corsConfigurationSource))
+                .csrf(AbstractHttpConfigurer::disable) // NOSONAR java:S4502 API stateless con bearer token
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(a -> a
                         .requestMatchers("/actuator/health/**", "/actuator/info", "/actuator/prometheus").permitAll()
                         .requestMatchers("/internal/**").hasRole(InternalTokenFilter.INTERNAL_ROLE)
-                        // Búsqueda, viajes en ruta (seguimiento sin tiquete) y consulta del catálogo son públicas.
-                        .requestMatchers(HttpMethod.GET, "/trips/search", "/trips/cities", "/trips/in-progress",
-                                "/itineraries/**", "/routes/**").permitAll()
+                        // Búsqueda, viajes en ruta (seguimiento sin tiquete) y consulta de un viaje son públicas,
+                        // igual que las paradas de una ruta (las usa fleet). GET /itineraries y /routes (listados
+                        // de la empresa, US-114/US-116) exigen token. Sprint 6: calendario, ida y vuelta, terminales
+                        // y autocompletado también son públicos.
+                        .requestMatchers(HttpMethod.GET, "/trips/search", "/trips/search/companies", "/trips/cities", "/trips/in-progress",
+                                "/trips/calendar", "/trips/round-trip",
+                                "/itineraries/*", "/itineraries/*/seatmap", "/itineraries/*/price",
+                                "/routes/*/stops", "/terminals", "/terminals/*", "/places").permitAll()
                         // Swagger (en prod springdoc está apagado y estas rutas dan 404) y página de error.
                         .requestMatchers(HttpMethod.GET, "/v3/api-docs/**", "/swagger-ui/**",
                                 "/swagger-ui.html").permitAll()

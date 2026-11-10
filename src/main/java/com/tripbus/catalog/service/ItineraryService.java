@@ -3,12 +3,9 @@ package com.tripbus.catalog.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tripbus.catalog.common.error.ApiException;
-import com.tripbus.catalog.common.events.EventPublisher;
 import com.tripbus.catalog.domain.Itinerary;
-import com.tripbus.catalog.domain.ItineraryStatus;
 import com.tripbus.catalog.domain.SeatMap;
 import com.tripbus.catalog.domain.Stop;
-import com.tripbus.catalog.events.CatalogEvents;
 import com.tripbus.catalog.repository.ItineraryRepository;
 import com.tripbus.catalog.repository.RouteRepository;
 import com.tripbus.catalog.repository.SeatMapRepository;
@@ -23,10 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -36,8 +30,6 @@ public class ItineraryService {
     private final RouteRepository routeRepository;
     private final StopRepository stopRepository;
     private final SeatMapRepository seatMapRepository;
-    private final EventPublisher eventPublisher;
-    private final SearchCache searchCache;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -46,16 +38,12 @@ public class ItineraryService {
             RouteRepository routeRepository,
             StopRepository stopRepository,
             SeatMapRepository seatMapRepository,
-            EventPublisher eventPublisher,
-            SearchCache searchCache,
             ObjectMapper objectMapper,
             Clock clock) {
         this.itineraryRepository = itineraryRepository;
         this.routeRepository = routeRepository;
         this.stopRepository = stopRepository;
         this.seatMapRepository = seatMapRepository;
-        this.eventPublisher = eventPublisher;
-        this.searchCache = searchCache;
         this.objectMapper = objectMapper;
         this.clock = clock;
     }
@@ -83,7 +71,8 @@ public class ItineraryService {
                 i.getPrecioBase(),
                 i.getMoneda(),
                 oferta(i),
-                paradas);
+                paradas,
+                i.getBus().getServicios().stream().map(Enum::name).toList());
     }
 
     /** US-016: distribución real del bus asignado al itinerario. */
@@ -92,13 +81,8 @@ public class ItineraryService {
         Itinerary i = find(id);
         SeatMap seatMap = seatMapRepository.findByBusId(i.getBus().getId())
                 .orElseThrow(() -> ApiException.notFound("SEAT_MAP_NOT_FOUND", "El bus no tiene mapa de asientos"));
-        JsonNode distribucion = readJson(seatMap.getDistribucion());
-        List<String> asientos = new ArrayList<>();
-        distribucion.path("pisos").forEach(piso -> piso.path("celdas").forEach(celda -> {
-            if (celda.hasNonNull("asiento")) {
-                asientos.add(celda.get("asiento").asText());
-            }
-        }));
+        JsonNode distribucion = ItineraryPublisher.conCategorias(readJson(seatMap.getDistribucion()));
+        List<String> asientos = ItineraryPublisher.seatNumbers(distribucion);
         return new SeatMapResponse(i.getId(), i.getBus().getId(), i.getBus().getPlaca(), i.getBus().getTipo().name(),
                 i.getBus().getCapacidad(), asientos, distribucion);
     }
@@ -117,21 +101,6 @@ public class ItineraryService {
         return stopRepository.findByRouteIdOrderByOrdenAsc(routeId).stream().map(s -> toStop(s, null)).toList();
     }
 
-    @Transactional
-    public ItineraryDetail cancel(UUID id, String motivo) {
-        Itinerary i = find(id);
-        if (i.getEstado() == ItineraryStatus.CANCELADO) {
-            throw ApiException.conflict("ITINERARY_ALREADY_CANCELLED", "El itinerario ya está cancelado");
-        }
-        i.cancelar();
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("itineraryId", i.getId());
-        payload.put("motivo", motivo);
-        eventPublisher.publishAfterCommit(CatalogEvents.ITINERARY_CANCELLED, payload);
-        searchCache.evictAll();
-        return detail(id);
-    }
-
     private Itinerary find(UUID id) {
         return itineraryRepository.findDetailed(id)
                 .orElseThrow(() -> ApiException.notFound("ITINERARY_NOT_FOUND", "El itinerario no existe"));
@@ -147,7 +116,7 @@ public class ItineraryService {
     private static StopResponse toStop(Stop s, Instant salida) {
         Instant hora = salida != null ? salida.plusSeconds(s.getMinutosDesdeSalida() * 60L) : null;
         return new StopResponse(s.getId(), s.getOrden(), s.getNombre(), s.getLat(), s.getLng(),
-                s.getMinutosDesdeSalida(), hora);
+                s.getMinutosDesdeSalida(), hora, s.getTerminalId());
     }
 
     private JsonNode readJson(String json) {

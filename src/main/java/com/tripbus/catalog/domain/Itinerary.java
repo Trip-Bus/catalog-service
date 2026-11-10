@@ -90,6 +90,17 @@ public class Itinerary {
         this.estado = ItineraryStatus.CANCELADO;
     }
 
+    /** US-118: nueva salida y su llegada estimada. */
+    public void reprogramar(Instant fechaSalida, Instant fechaLlegadaEstimada) {
+        this.fechaSalida = fechaSalida;
+        this.fechaLlegadaEstimada = fechaLlegadaEstimada;
+    }
+
+    /** US-119: el viaje pasa a otro bus. */
+    public void cambiarBus(Bus bus) {
+        this.bus = bus;
+    }
+
     public UUID getId() {
         return id;
     }

@@ -1,5 +1,7 @@
 package com.tripbus.catalog.domain;
 
+import com.tripbus.catalog.service.TextNormalizer;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -32,17 +34,32 @@ public class Stop {
     @Column(name = "minutos_desde_salida", nullable = false)
     private int minutosDesdeSalida;
 
+    /** US-138: nombre en minúsculas y sin tildes, para encontrar tramos intermedios en la búsqueda. */
+    @Column(name = "nombre_norm", nullable = false)
+    private String nombreNorm;
+
+    /** US-115: terminal de transporte de la parada (opcional). */
+    @Column(name = "terminal_id")
+    private UUID terminalId;
+
     protected Stop() {
     }
 
     public Stop(UUID id, UUID routeId, int orden, String nombre, double lat, double lng, int minutosDesdeSalida) {
+        this(id, routeId, orden, nombre, lat, lng, minutosDesdeSalida, null);
+    }
+
+    public Stop(UUID id, UUID routeId, int orden, String nombre, double lat, double lng, int minutosDesdeSalida,
+                UUID terminalId) {
         this.id = id;
         this.routeId = routeId;
         this.orden = orden;
         this.nombre = nombre;
+        this.nombreNorm = TextNormalizer.normalize(nombre);
         this.lat = lat;
         this.lng = lng;
         this.minutosDesdeSalida = minutosDesdeSalida;
+        this.terminalId = terminalId;
     }
 
     public UUID getId() {
@@ -71,5 +88,13 @@ public class Stop {
 
     public int getMinutosDesdeSalida() {
         return minutosDesdeSalida;
+    }
+
+    public String getNombreNorm() {
+        return nombreNorm;
+    }
+
+    public UUID getTerminalId() {
+        return terminalId;
     }
 }

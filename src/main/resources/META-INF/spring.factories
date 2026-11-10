@@ -1,2 +1,3 @@
 org.springframework.boot.env.EnvironmentPostProcessor=\
-com.tripbus.catalog.config.RequiredSecretsCheck
+com.tripbus.catalog.config.RequiredSecretsCheck,\
+com.tripbus.catalog.config.ObservabilityEnvironment

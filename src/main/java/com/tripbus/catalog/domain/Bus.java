@@ -1,12 +1,16 @@
 package com.tripbus.catalog.domain;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
+import java.time.Instant;
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.UUID;
 
 @Entity
@@ -29,6 +33,21 @@ public class Bus {
     @Column(nullable = false)
     private int capacidad;
 
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private BusStatus estado = BusStatus.ACTIVO;
+
+    /** US-113: servicios a bordo. */
+    @Convert(converter = ServiciosConverter.class)
+    @Column(nullable = false)
+    private Set<ServicioBus> servicios = EnumSet.noneOf(ServicioBus.class);
+
+    @Column(name = "creado_en", nullable = false)
+    private Instant creadoEn = Instant.now();
+
+    @Column(name = "actualizado_en", nullable = false)
+    private Instant actualizadoEn = creadoEn;
+
     protected Bus() {
     }
 
@@ -38,6 +57,31 @@ public class Bus {
         this.placa = placa;
         this.tipo = tipo;
         this.capacidad = capacidad;
+    }
+
+    public void actualizar(String placa, BusType tipo, Instant ahora) {
+        this.placa = placa;
+        this.tipo = tipo;
+        this.actualizadoEn = ahora;
+    }
+
+    public void cambiarServicios(Set<ServicioBus> servicios, Instant ahora) {
+        EnumSet<ServicioBus> copia = EnumSet.noneOf(ServicioBus.class);
+        if (servicios != null) {
+            copia.addAll(servicios);
+        }
+        this.servicios = copia;
+        this.actualizadoEn = ahora;
+    }
+
+    public void cambiarCapacidad(int capacidad, Instant ahora) {
+        this.capacidad = capacidad;
+        this.actualizadoEn = ahora;
+    }
+
+    public void cambiarEstado(BusStatus estado, Instant ahora) {
+        this.estado = estado;
+        this.actualizadoEn = ahora;
     }
 
     public UUID getId() {
@@ -58,5 +102,21 @@ public class Bus {
 
     public int getCapacidad() {
         return capacidad;
+    }
+
+    public BusStatus getEstado() {
+        return estado;
+    }
+
+    public Set<ServicioBus> getServicios() {
+        return servicios;
+    }
+
+    public Instant getCreadoEn() {
+        return creadoEn;
+    }
+
+    public Instant getActualizadoEn() {
+        return actualizadoEn;
     }
 }

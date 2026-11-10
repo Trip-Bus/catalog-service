@@ -22,5 +22,6 @@ public record ItineraryDetail(
         BigDecimal precioBase,
         String moneda,
         OfertaResumen ofertaActiva,
-        List<StopResponse> paradas) {
+        List<StopResponse> paradas,
+        List<String> servicios) {
 }

@@ -1,9 +1,12 @@
 package com.tripbus.catalog.web;
 
 import com.tripbus.catalog.service.InProgressService;
+import com.tripbus.catalog.service.SearchFilters;
 import com.tripbus.catalog.service.SearchService;
+import com.tripbus.catalog.web.dto.CalendarDay;
+import com.tripbus.catalog.web.dto.RoundTripResult;
 import com.tripbus.catalog.web.dto.TripInProgress;
-import com.tripbus.catalog.web.dto.TripSearchResult;
+import com.tripbus.catalog.web.dto.PublicTripSearchResult;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -11,6 +14,9 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseEntity;
+import java.math.BigDecimal;
+import java.util.UUID;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -27,13 +33,76 @@ public class TripController {
         this.inProgressService = inProgressService;
     }
 
-    /** US-007/US-008/US-014: GET /trips/search?origin=Bogotá&destination=Medellín&date=2026-10-02 */
+    /**
+     * US-007/US-008/US-014: GET /trips/search?origin=Bogotá&destination=Medellín&date=2026-10-02. US-138: tramos
+     * (opcional) controla los viajes en los que origen y destino son paradas intermedias (ver SearchMode).
+     */
+    @Operation(summary = "Buscar viajes (público)",
+            description = "Ordenados por salida. Sin tramos: los directos y, solo si no hay ruta directa entre las dos "
+                    + "ciudades, los tramos intermedios de otras rutas (con fromOrden, toOrden, salida, llegada y precio "
+                    + "del tramo). tramos=true: directos y tramos; tramos=false: solo directos.")
     @GetMapping("/search")
-    public List<TripSearchResult> search(
+    public ResponseEntity<List<PublicTripSearchResult>> search(
             @RequestParam String origin,
             @RequestParam String destination,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(required = false) UUID companyId,
+            @RequestParam(required = false) String franja,
+            @RequestParam(required = false) BigDecimal precioMin,
+            @RequestParam(required = false) BigDecimal precioMax,
+            @RequestParam(required = false) String tipoBus,
+            @RequestParam(defaultValue = "salida") String sort,
+            @RequestParam(defaultValue = "asc") String order,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) Boolean tramos) {
+        var result = searchService.search(origin, destination, date, new SearchFilters(companyId, franja, precioMin,
+                precioMax, tipoBus, sort, order, page, size, tramos));
+        return ResponseEntity.ok().header("X-Total-Count", Long.toString(result.total()))
+                .body(result.content().stream().map(PublicTripSearchResult::from).toList());
+    }
+
+    @Operation(summary = "Ida y vuelta (público)",
+            description = "US-137: {ida, vuelta} con la misma lógica y filtros de /trips/search (la vuelta va de "
+                    + "destination a origin en returnDate). 400 INVALID_SEARCH si returnDate es anterior a date.")
+    @GetMapping("/round-trip")
+    public RoundTripResult roundTrip(
+            @RequestParam String origin,
+            @RequestParam String destination,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate returnDate,
+            @RequestParam(required = false) UUID companyId,
+            @RequestParam(required = false) String franja,
+            @RequestParam(required = false) BigDecimal precioMin,
+            @RequestParam(required = false) BigDecimal precioMax,
+            @RequestParam(required = false) String tipoBus,
+            @RequestParam(defaultValue = "salida") String sort,
+            @RequestParam(defaultValue = "asc") String order,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size,
+            @RequestParam(required = false) Boolean tramos) {
+        return searchService.roundTrip(origin, destination, date, returnDate, new SearchFilters(companyId, franja,
+                precioMin, precioMax, tipoBus, sort, order, page, size, tramos));
+    }
+
+    @Operation(summary = "Calendario de precios (público)",
+            description = "US-136: por cada día desde from (days días, por defecto 7, máximo 14): precio más bajo para "
+                    + "un adulto (con oferta si hay), número de viajes y si hay cupo (null si Seat Inventory no respondió). "
+                    + "Cache de 60 s.")
+    @GetMapping("/calendar")
+    public List<CalendarDay> calendar(
+            @RequestParam String origin,
+            @RequestParam String destination,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(defaultValue = "7") int days) {
+        return searchService.calendar(origin, destination, from, days);
+    }
+
+    @GetMapping("/search/companies")
+    public List<com.tripbus.catalog.web.dto.SearchCompany> searchCompanies(
+            @RequestParam String origin, @RequestParam String destination,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        return searchService.search(origin, destination, date);
+        return searchService.companies(origin, destination, date);
     }
 
     /**

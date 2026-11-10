@@ -5,15 +5,23 @@ import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import io.swagger.v3.oas.models.servers.Server;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.util.StringUtils;
+
+import java.util.List;
 
 /**
  * Documentación OpenAPI / Swagger UI (http://localhost:18002/swagger-ui.html). Solo en IDE y QA:
  * application-prod.yml apaga springdoc. La búsqueda es pública; para /admin/** el botón "Authorize"
  * acepta el accessToken que emite identity en /auth/login.
+ *
+ * <p>HT-10: con OPENAPI_SERVER_URL (tripbus.openapi.server-url) el documento anuncia esa URL como servidor
+ * (p. ej. la del API Gateway, para que "Try it out" pase por él); vacía, springdoc usa la del servicio.
  */
 @Configuration
 public class OpenApiConfig {
@@ -21,10 +29,11 @@ public class OpenApiConfig {
     private static final String BEARER = "bearer-jwt";
 
     @Bean
-    public OpenAPI catalogOpenApi(ObjectProvider<BuildProperties> buildProperties) {
+    public OpenAPI catalogOpenApi(ObjectProvider<BuildProperties> buildProperties,
+                                  @Value("${tripbus.openapi.server-url:}") String serverUrl) {
         BuildProperties build = buildProperties.getIfAvailable();
         String version = build != null ? build.getVersion() : "dev";
-        return new OpenAPI()
+        OpenAPI openApi = new OpenAPI()
                 .info(new Info()
                         .title("TripBus · Catalog")
                         .description("Rutas, paradas, itinerarios, buses, mapas de asientos, precios y búsqueda de viajes.")
@@ -34,5 +43,9 @@ public class OpenApiConfig {
                         .scheme("bearer")
                         .bearerFormat("JWT")))
                 .addSecurityItem(new SecurityRequirement().addList(BEARER));
+        if (StringUtils.hasText(serverUrl)) {
+            openApi.servers(List.of(new Server().url(serverUrl.trim())));
+        }
+        return openApi;
     }
 }
