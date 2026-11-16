@@ -9,7 +9,9 @@ import com.tripbus.catalog.domain.BusType;
 import com.tripbus.catalog.domain.Company;
 import com.tripbus.catalog.domain.Itinerary;
 import com.tripbus.catalog.domain.Route;
+import com.tripbus.catalog.repository.FareSeasonRepository;
 import com.tripbus.catalog.repository.ItineraryRepository;
+import com.tripbus.catalog.repository.PassengerTypeFareRepository;
 import com.tripbus.catalog.repository.RouteRepository;
 import com.tripbus.catalog.repository.SegmentPriceRepository;
 import com.tripbus.catalog.repository.StopRepository;
@@ -52,7 +54,7 @@ class SearchServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new SearchService(finder(mock(ItineraryRepository.class)), mock(RouteRepository.class), seatInventory,
+        service = new SearchService(finder(mock(ItineraryRepository.class)), mock(RouteRepository.class), mock(StopRepository.class), seatInventory,
                 cache, Clock.fixed(AHORA, ZoneOffset.UTC), CatalogMetrics.enMemoria());
         when(cache.get(anyString(), anyString(), any(), anyString())).thenReturn(Optional.of(List.of(viaje)));
     }
@@ -114,7 +116,7 @@ class SearchServiceTest {
     @Test
     void sinCacheConsultaLaBaseYGuardaElResultado() {
         ItineraryRepository repo = mock(ItineraryRepository.class);
-        SearchService conBase = new SearchService(finder(repo), mock(RouteRepository.class), seatInventory, cache,
+        SearchService conBase = new SearchService(finder(repo), mock(RouteRepository.class), mock(StopRepository.class), seatInventory, cache,
                 Clock.fixed(AHORA, ZoneOffset.UTC), CatalogMetrics.enMemoria());
         when(cache.get(anyString(), anyString(), any(), anyString())).thenReturn(Optional.empty());
         when(seatInventory.availability(anyCollection())).thenReturn(Optional.of(Map.of()));
@@ -150,7 +152,7 @@ class SearchServiceTest {
         RouteRepository rutas = mock(RouteRepository.class);
         when(rutas.findOrigenes()).thenReturn(List.of("Tunja", "Bogotá"));
         when(rutas.findDestinos()).thenReturn(List.of("Bogotá", "Cali"));
-        SearchService s = new SearchService(finder(mock(ItineraryRepository.class)), rutas, seatInventory, cache,
+        SearchService s = new SearchService(finder(mock(ItineraryRepository.class)), rutas, mock(StopRepository.class), seatInventory, cache,
                 Clock.fixed(AHORA, ZoneOffset.UTC), CatalogMetrics.enMemoria());
         assertThat(s.cities()).containsExactly("Bogotá", "Cali", "Tunja");
     }
@@ -237,7 +239,8 @@ class SearchServiceTest {
 
     private static TripFinder finder(ItineraryRepository repo) {
         return new TripFinder(repo, mock(RouteRepository.class), mock(StopRepository.class),
-                mock(SegmentPriceRepository.class), Clock.fixed(AHORA, ZoneOffset.UTC), 30);
+                mock(SegmentPriceRepository.class), new TarifaAdulto(mock(FareSeasonRepository.class),
+                mock(PassengerTypeFareRepository.class)), Clock.fixed(AHORA, ZoneOffset.UTC), 30);
     }
 
     private static TripSearchResult searchTrip(String type, BigDecimal price, Instant departure, int duration, UUID company) {

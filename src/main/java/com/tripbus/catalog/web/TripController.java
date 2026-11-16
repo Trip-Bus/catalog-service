@@ -5,6 +5,7 @@ import com.tripbus.catalog.service.SearchFilters;
 import com.tripbus.catalog.service.SearchService;
 import com.tripbus.catalog.web.dto.CalendarDay;
 import com.tripbus.catalog.web.dto.RoundTripResult;
+import com.tripbus.catalog.web.dto.SearchFacets;
 import com.tripbus.catalog.web.dto.TripInProgress;
 import com.tripbus.catalog.web.dto.PublicTripSearchResult;
 import io.swagger.v3.oas.annotations.Operation;
@@ -86,18 +87,50 @@ public class TripController {
     }
 
     @Operation(summary = "Calendario de precios (público)",
-            description = "US-136: por cada día desde from (days días, por defecto 7, máximo 14): precio más bajo para "
-                    + "un adulto (con oferta si hay), número de viajes y si hay cupo (null si Seat Inventory no respondió). "
-                    + "Cache de 60 s.")
+            description = "US-136: por cada día desde from (days días, por defecto 7, máximo 14) los mismos viajes que "
+                    + "daría /trips/search ese día con los mismos tramos, companyId, franja y tipoBus (solo los que aún "
+                    + "no salen, sin ofertas vencidas, agrupados por día de salida en America/Bogota): viajes = el total "
+                    + "de /trips/search, precioMinimo = el menor precioDesde de los viajes con cupo (agotado != true) y "
+                    + "hayCupo (null si Seat Inventory no respondió). Cache de 60 s por ruta, rango y filtros.")
     @GetMapping("/calendar")
     public List<CalendarDay> calendar(
             @RequestParam String origin,
             @RequestParam String destination,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-            @RequestParam(defaultValue = "7") int days) {
-        return searchService.calendar(origin, destination, from, days);
+            @RequestParam(defaultValue = "7") int days,
+            @RequestParam(required = false) Boolean tramos,
+            @RequestParam(required = false) UUID companyId,
+            @RequestParam(required = false) String franja,
+            @RequestParam(required = false) String tipoBus) {
+        return searchService.calendar(origin, destination, from, days, filtros(companyId, franja, tipoBus, tramos));
     }
 
+    @Operation(summary = "Facetas de la búsqueda (público)",
+            description = "Para armar los filtros: precioMin/precioMax = mínimo y máximo precioDesde de los viajes "
+                    + "vigentes del día con companyId, franja y tipoBus (sin filtro de precio; null sin viajes); "
+                    + "empresas = TODAS las que cubren la ruta en los próximos 14 días, ordenadas por nombre, con "
+                    + "{id, nombre, terminal (de salida en el origen, si hay), viajes (salidas del día con franja y "
+                    + "tipoBus, puede ser 0)}; tiposBus = los del día (con companyId y franja). tramos igual que en "
+                    + "/trips/search. 400 INVALID_SEARCH con parámetros inválidos.")
+    @GetMapping("/search/facets")
+    public SearchFacets facets(
+            @RequestParam String origin,
+            @RequestParam String destination,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(required = false) Boolean tramos,
+            @RequestParam(required = false) UUID companyId,
+            @RequestParam(required = false) String franja,
+            @RequestParam(required = false) String tipoBus) {
+        return searchService.facets(origin, destination, date, filtros(companyId, franja, tipoBus, tramos));
+    }
+
+    /** Filtros del calendario y las facetas: sin precio, orden ni página. */
+    private static SearchFilters filtros(UUID companyId, String franja, String tipoBus, Boolean tramos) {
+        return new SearchFilters(companyId, franja, null, null, tipoBus, "salida", "asc", 0, 50, tramos);
+    }
+
+    @Operation(summary = "Empresas de una búsqueda (público)",
+            description = "Se mantiene por compatibilidad: las empresas con viajes ese día. Ver /trips/search/facets.")
     @GetMapping("/search/companies")
     public List<com.tripbus.catalog.web.dto.SearchCompany> searchCompanies(
             @RequestParam String origin, @RequestParam String destination,

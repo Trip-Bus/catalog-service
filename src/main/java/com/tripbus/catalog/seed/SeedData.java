@@ -234,7 +234,7 @@ final class SeedData {
         return Collections.unmodifiableList(todas);
     }
 
-    private static List<StopSeed> alReves(List<StopSeed> ida) {
+    static List<StopSeed> alReves(List<StopSeed> ida) {
         int total = ida.get(ida.size() - 1).minutosDesdeSalida();
         List<StopSeed> regreso = new ArrayList<>();
         for (int i = ida.size() - 1; i >= 0; i--) {

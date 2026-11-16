@@ -60,7 +60,7 @@ public class SecurityConfig {
                         // igual que las paradas de una ruta (las usa fleet). GET /itineraries y /routes (listados
                         // de la empresa, US-114/US-116) exigen token. Sprint 6: calendario, ida y vuelta, terminales
                         // y autocompletado también son públicos.
-                        .requestMatchers(HttpMethod.GET, "/trips/search", "/trips/search/companies", "/trips/cities", "/trips/in-progress",
+                        .requestMatchers(HttpMethod.GET, "/trips/search", "/trips/search/companies", "/trips/search/facets", "/trips/cities", "/trips/in-progress",
                                 "/trips/calendar", "/trips/round-trip",
                                 "/itineraries/*", "/itineraries/*/seatmap", "/itineraries/*/price",
                                 "/routes/*/stops", "/terminals", "/terminals/*", "/places").permitAll()

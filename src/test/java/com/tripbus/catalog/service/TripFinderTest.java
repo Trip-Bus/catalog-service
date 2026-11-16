@@ -7,7 +7,12 @@ import com.tripbus.catalog.domain.Itinerary;
 import com.tripbus.catalog.domain.Route;
 import com.tripbus.catalog.domain.SegmentPrice;
 import com.tripbus.catalog.domain.ServicioBus;
+import com.tripbus.catalog.domain.FareSeason;
+import com.tripbus.catalog.domain.PassengerTypeFare;
+import com.tripbus.catalog.domain.TipoPasajero;
+import com.tripbus.catalog.repository.FareSeasonRepository;
 import com.tripbus.catalog.repository.ItineraryRepository;
+import com.tripbus.catalog.repository.PassengerTypeFareRepository;
 import com.tripbus.catalog.repository.RouteRepository;
 import com.tripbus.catalog.repository.SegmentPriceRepository;
 import com.tripbus.catalog.repository.StopRepository;
@@ -19,6 +24,7 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.EnumSet;
@@ -46,7 +52,10 @@ class TripFinderTest {
     private final RouteRepository routes = mock(RouteRepository.class);
     private final StopRepository stops = mock(StopRepository.class);
     private final SegmentPriceRepository segmentPrices = mock(SegmentPriceRepository.class);
+    private final FareSeasonRepository seasons = mock(FareSeasonRepository.class);
+    private final PassengerTypeFareRepository passengerTypes = mock(PassengerTypeFareRepository.class);
     private final TripFinder finder = new TripFinder(itineraries, routes, stops, segmentPrices,
+            new TarifaAdulto(seasons, passengerTypes),
             Clock.fixed(AHORA, ZoneOffset.UTC), 30);
 
     private Route ruta;
@@ -146,6 +155,56 @@ class TripFinderTest {
                     assertThat(t.ofertaActiva()).isNotNull();
                     assertThat(t.precioEfectivo()).isEqualByComparingTo("36000");
                 });
+    }
+
+    @Test
+    void cadaResultadoLlevaLaTemporadaDeSuDiaYElDescuentoDeAdultoDeSuEmpresa() {
+        UUID empresa = ruta.getCompany().getId();
+        LocalDate dia = LocalDate.ofInstant(directo.getFechaSalida(), CatalogTime.ZONE);
+        when(routes.existsByOrigenNormAndDestinoNorm("bogota", "medellin")).thenReturn(true);
+        when(seasons.solapan(Set.of(empresa), dia, dia)).thenReturn(List.of(new FareSeason(UUID.randomUUID(), empresa,
+                ruta.getId(), "Puente", dia, dia, new BigDecimal("1.20"), AHORA)));
+        when(passengerTypes.findByCompanyIdInAndTipo(Set.of(empresa), TipoPasajero.ADULTO)).thenReturn(List.of(
+                new PassengerTypeFare(UUID.randomUUID(), empresa, TipoPasajero.ADULTO, new BigDecimal("10"))));
+
+        TripSearchResult r = finder.buscar("bogota", "medellin", DESDE, HASTA, SearchMode.AUTO).get(0);
+
+        // 95.000 × 1,2 = 114.000; adulto con 10 %: 102.600.
+        assertThat(r.multiplicadorTemporada()).isEqualByComparingTo("1.20");
+        assertThat(r.descuentoAdulto()).isEqualByComparingTo("10");
+        assertThat(r.precioDesde()).isEqualByComparingTo("102600");
+    }
+
+    @Test
+    void sinViajesNoConsultaTarifas() {
+        when(itineraries.search(anyString(), anyString(), any(), any())).thenReturn(List.of());
+        when(routes.existsByOrigenNormAndDestinoNorm("bogota", "medellin")).thenReturn(true);
+
+        assertThat(finder.buscar("bogota", "medellin", DESDE, HASTA, SearchMode.AUTO)).isEmpty();
+        verify(seasons, never()).solapan(anyCollection(), any(), any());
+        verify(passengerTypes, never()).findByCompanyIdInAndTipo(anyCollection(), any());
+    }
+
+    @Test
+    void elTramoConOfertaGuardaSuPrecioSinOfertaParaCuandoVenza() {
+        Route larga = new Route(UUID.randomUUID(), ruta.getCompany(), "Villavicencio", "Medellín", 720);
+        Itinerary conOferta = viaje(larga, AHORA.plus(2, ChronoUnit.HOURS));
+        Instant fin = AHORA.plus(3, ChronoUnit.HOURS);
+        conOferta.marcarOferta(UUID.randomUUID(), new BigDecimal("72000"), fin);
+        when(stops.tramos("honda", "medellin")).thenReturn(List.of(new TramoParada(larga.getId(), 3, 5, 360, 720, 720)));
+        when(itineraries.searchByRoutes(anyCollection(), any(), any())).thenReturn(List.of(conOferta));
+        when(segmentPrices.findByRouteIdIn(anyCollection())).thenReturn(List.of(
+                new SegmentPrice(UUID.randomUUID(), larga.getId(), 3, 5, new BigDecimal("50000"))));
+
+        TripSearchResult tramo = finder.buscar("honda", "medellin", DESDE, HASTA, SearchMode.TODOS).stream()
+                .filter(TripSearchResult::esTramo).findFirst().orElseThrow();
+
+        // Con la oferta: 72.000 × 360 / 720 = 36.000; sin ella, el precio exacto del tramo.
+        assertThat(tramo.precioDesde()).isEqualByComparingTo("36000");
+        TripSearchResult vencida = tramo.sinOfertaVencida(fin);
+        assertThat(vencida.ofertaActiva()).isNull();
+        assertThat(vencida.precio()).isEqualByComparingTo("50000");
+        assertThat(vencida.precioDesde()).isEqualByComparingTo("50000");
     }
 
     @Test

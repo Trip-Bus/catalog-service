@@ -68,6 +68,7 @@ class Sprint6IT {
     private static final UUID CORDILLERA = SeedService.id("company:cordillera");
     private static final UUID CARIBE = SeedService.id("company:caribe");
     private static final UUID SALITRE = UUID.fromString("7e0a0001-0000-4000-8000-000000000001");
+    private static final Set<String> FICTICIAS = Set.of("Expreso Andino", "Flota Cordillera", "Transportes Caribe Sol");
 
     @Container
     @ServiceConnection
@@ -107,12 +108,13 @@ class Sprint6IT {
     @Test
     void sinParametrosNuevosLaBusquedaEsLaDeAntesMasLosServicios() throws Exception {
         JsonNode r = json(mockMvc.perform(get("/trips/search").param("origin", "Bogotá")
-                .param("destination", "Medellín").param("date", manana.toString())).andExpect(status().isOk())
+                .param("destination", "Medellín").param("date", manana.toString())
+                .param("companyId", ANDINO.toString())).andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(5)));
 
         Set<String> campos = Set.of("itineraryId", "routeId", "busId", "empresa", "origen", "destino", "fechaSalida",
                 "fechaLlegadaEstimada", "duracionMinutos", "precioBase", "moneda", "tipoBus", "capacidad",
-                "asientosDisponibles", "agotado", "ofertaActiva", "disponibilidadConocida", "servicios");
+                "asientosDisponibles", "agotado", "ofertaActiva", "disponibilidadConocida", "servicios", "precioDesde");
         for (JsonNode viaje : r) {
             assertThat(nombres(viaje)).containsExactlyInAnyOrderElementsOf(campos);
             assertThat(viaje.get("origen").asText()).isEqualTo("Bogotá");
@@ -154,8 +156,9 @@ class Sprint6IT {
         for (JsonNode viaje : r) {
             tramos += viaje.has("fromOrden") ? 1 : 0;
         }
-        assertThat(r.size()).isGreaterThan(5);
-        assertThat(tramos).isEqualTo(r.size() - 5L);
+        // Directos: los 5 de Expreso Andino y los 5 de Rápido Ochoa y Flota Santa Fe.
+        assertThat(r.size()).isGreaterThan(10);
+        assertThat(tramos).isEqualTo(r.size() - 10L);
         mockMvc.perform(get("/trips/search").param("origin", "honda").param("destination", "Medellín")
                         .param("date", manana.toString()).param("tramos", "false"))
                 .andExpect(jsonPath("$.length()").value(0));
@@ -164,14 +167,20 @@ class Sprint6IT {
     @Test
     void calendarioConSeatInventoryCaido() throws Exception {
         JsonNode dias = json(mockMvc.perform(get("/trips/calendar").param("origin", "Bogotá")
-                .param("destination", "Medellín").param("from", manana.toString()).param("days", "3"))
+                .param("destination", "Medellín").param("from", manana.toString()).param("days", "3")
+                .param("companyId", ANDINO.toString()))
                 .andExpect(status().isOk()));
 
         assertThat(dias.size()).isEqualTo(3);
         for (JsonNode dia : dias) {
             assertThat(dia.get("viajes").asInt()).isEqualTo(5);
-            // La salida de las 22:00 tiene 10 % de descuento en el seed: 85.500 es el mínimo de cada día.
-            assertThat(dia.get("precioMinimo").decimalValue()).isEqualByComparingTo("85500");
+            // El mínimo es el menor precioDesde de /trips/search ese día (la salida de las 22:00, con 10 % de descuento
+            // en el seed, y la temporada si otra prueba ya la creó).
+            JsonNode busqueda = json(mockMvc.perform(get("/trips/search").param("origin", "Bogotá")
+                    .param("destination", "Medellín").param("date", dia.get("fecha").asText())
+                    .param("companyId", ANDINO.toString()).param("sort", "precio")));
+            assertThat(dia.get("precioMinimo").decimalValue())
+                    .isEqualByComparingTo(busqueda.get(0).get("precioDesde").decimalValue());
             assertThat(dia.get("hayCupo").isNull()).isTrue();
         }
         mockMvc.perform(get("/trips/calendar").param("origin", "Bogotá").param("destination", "Medellín")
@@ -182,7 +191,8 @@ class Sprint6IT {
     void idaYVuelta() throws Exception {
         JsonNode r = json(mockMvc.perform(get("/trips/round-trip").param("origin", "Bogotá")
                 .param("destination", "Medellín").param("date", manana.toString())
-                .param("returnDate", manana.plusDays(2).toString())).andExpect(status().isOk()));
+                .param("returnDate", manana.plusDays(2).toString())
+                .param("companyId", ANDINO.toString())).andExpect(status().isOk()));
 
         assertThat(r.get("ida").size()).isEqualTo(5);
         assertThat(r.get("vuelta").size()).isEqualTo(5);
@@ -363,7 +373,7 @@ class Sprint6IT {
                 .andExpect(jsonPath("$[0].precioBase").value(95000));
         JsonNode todos = json(mockMvc.perform(interno(get("/internal/itineraries"))
                 .param("desde", manana.toString()).param("hasta", manana.plusDays(1).toString())).andExpect(status().isOk()));
-        assertThat(todos.size()).isEqualTo(42 * 5 * 2);
+        assertThat(todos.size()).isEqualTo((42 * 5 + 206) * 2);
         mockMvc.perform(interno(get("/internal/itineraries")).param("desde", manana.toString())
                 .param("hasta", manana.plusDays(31).toString())).andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("INVALID_RANGE"));
@@ -511,7 +521,13 @@ class Sprint6IT {
     private UUID primerViaje(String origen, String destino) throws Exception {
         JsonNode r = json(mockMvc.perform(get("/trips/search").param("origin", origen).param("destination", destino)
                 .param("date", manana.toString()).param("tramos", "false")));
-        return UUID.fromString(r.get(0).get("itineraryId").asText());
+        // Solo las 3 empresas ficticias (las pruebas usan sus operadores, tarifas y temporadas).
+        for (JsonNode viaje : r) {
+            if (FICTICIAS.contains(viaje.get("empresa").asText())) {
+                return UUID.fromString(viaje.get("itineraryId").asText());
+            }
+        }
+        throw new AssertionError("Sin viajes de las empresas ficticias de " + origen + " a " + destino);
     }
 
     private JsonNode json(ResultActions resultado) throws Exception {
