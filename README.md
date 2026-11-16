@@ -13,13 +13,14 @@ Responde las búsquedas del pasajero y es dueño de la carga inicial de datos (s
 
 | Método | Endpoint | Descripción |
 |---|---|---|
-| GET | `/trips/search?origin=&destination=&date=YYYY-MM-DD&companyId=&franja=&precioMin=&precioMax=&tipoBus=&sort=&order=&page=&size=` | Búsqueda pública. `franja`: `MANANA` (05:00–11:59), `TARDE` (12:00–17:59) o `NOCHE` (18:00–04:59), hora de Bogotá. Precio filtra el precio del pasajero (oferta activa si existe). `sort`: `salida` (default), `precio` o `duracion`; `order`: `asc` (default) o `desc`; `page`=0, `size`=50 (máximo 100). Sigue respondiendo lista; `X-Total-Count` da el total filtrado y está expuesto por CORS. Sin parámetros nuevos conserva el comportamiento actual. Cada resultado trae `servicios` del bus (US-113). `tramos` (US-138, opcional): sin enviarlo devuelve los viajes directos y, solo si no hay ruta directa entre las dos ciudades, los tramos de rutas donde origen y destino son paradas intermedias; `true` directos y tramos; `false` solo directos. Un resultado de tramo agrega `fromOrden`, `toOrden`, `salida`, `llegada` y `precio` (ver *Reglas de precio*); sin paradas intermedias la respuesta es idéntica a la de antes. |
+| GET | `/trips/search?origin=&destination=&date=YYYY-MM-DD&companyId=&franja=&precioMin=&precioMax=&tipoBus=&sort=&order=&page=&size=` | Búsqueda pública. `franja`: `MANANA` (05:00–11:59), `TARDE` (12:00–17:59) o `NOCHE` (18:00–04:59), hora de Bogotá. `precioMin`/`precioMax` y `sort=precio` usan `precioDesde` (ver *Precio "desde"*). `sort`: `salida` (default), `precio` o `duracion`; `order`: `asc` (default) o `desc`; `page`=0, `size`=50 (máximo 100). Sigue respondiendo lista; `X-Total-Count` da el total filtrado y está expuesto por CORS. Sin parámetros nuevos conserva el comportamiento actual. Cada resultado trae `servicios` del bus (US-113). `tramos` (US-138, opcional): sin enviarlo devuelve los viajes directos y, solo si no hay ruta directa entre las dos ciudades, los tramos de rutas donde origen y destino son paradas intermedias; `true` directos y tramos; `false` solo directos. Un resultado de tramo agrega `fromOrden`, `toOrden`, `salida`, `llegada` y `precio` (ver *Reglas de precio*); sin paradas intermedias la respuesta es idéntica a la de antes. Cada resultado trae además `precioDesde` (sin quitar los campos anteriores). |
 | GET | `/trips/round-trip?origin=&destination=&date=&returnDate=` (+ filtros de `/trips/search`) | Ida y vuelta (US-137, público): `{ida: [...], vuelta: [...]}`, cada lista igual a `/trips/search` (la vuelta busca destino → origen en `returnDate`). `returnDate` anterior a `date` → 400 `INVALID_SEARCH`. |
-| GET | `/trips/calendar?origin=&destination=&from=YYYY-MM-DD&days=` | Calendario de precios (US-136, público): `days` 1–14 (7 por defecto). Por día `{fecha, precioMinimo, viajes, hayCupo}`: precio más bajo de un adulto (el de la oferta si hay), número de viajes y si alguno tiene asientos libres, con **una sola** llamada a Seat Inventory `/internal/occupancy`. Si Seat Inventory no responde, `hayCupo` es `null` y ese calendario no se cachea; si responde, se cachea 60 s. |
+| GET | `/trips/calendar?origin=&destination=&from=YYYY-MM-DD&days=&tramos=&companyId=&franja=&tipoBus=` | Calendario de precios (US-136, público): `days` 1–14 (7 por defecto). Usa **exactamente** los viajes de `/trips/search` con los mismos `tramos` (mismo valor por defecto), `companyId`, `franja` y `tipoBus`: solo los que aún no salen, sin ofertas vencidas, agrupados por día de salida del pasajero en America/Bogota. Por día `{fecha, precioMinimo, viajes, hayCupo}`: `viajes` = el total (`X-Total-Count`) que daría `/trips/search` ese día con esos filtros; `precioMinimo` = el menor `precioDesde` de los viajes con cupo (`agotado != true`; `null` si no hay); `hayCupo` = algún viaje con asientos libres, con **una sola** llamada a Seat Inventory `/seats/availability`. Si Seat Inventory no responde, `hayCupo` es `null` y ese calendario no se cachea; si responde, se cachea 60 s con una llave que incluye ruta, rango, modo y filtros. |
+| GET | `/trips/search/facets?origin=&destination=&date=YYYY-MM-DD&tramos=&companyId=&franja=&tipoBus=` | Facetas para armar los filtros (público). `{precioMin, precioMax, empresas, tiposBus}`: `precioMin`/`precioMax` = mínimo y máximo `precioDesde` de los viajes vigentes de ese día con `companyId`, `franja` y `tipoBus` (sin filtro de precio; `null` sin viajes). `empresas` = **todas** las empresas que cubren la ruta en los próximos 14 días (y las del día pedido), ordenadas por nombre, cada una `{id, nombre, terminal, viajes}`: `terminal` es la terminal de salida en la ciudad de origen (`null` si sus paradas no tienen terminal) y `viajes` las salidas de esa fecha con `franja` y `tipoBus` (puede ser 0; es el `X-Total-Count` de `/trips/search` con su `companyId`). `tiposBus` = los tipos de bus del día (con `companyId` y `franja`). Parámetros inválidos → 400 `INVALID_SEARCH`. |
 | GET | `/places?q=` | Autocompletado (US-115, público): ciudades y terminales cuyo nombre empieza por `q`, sin distinguir tildes ni mayúsculas (`medell` → Medellín), máximo 10, primero ciudades: `[{tipo: CIUDAD\|TERMINAL, nombre, ciudad, terminalId?}]`. `q` vacío → 400 `INVALID_QUERY`. `/trips/cities` no cambia. |
 | GET | `/terminals?ciudad=` | Terminales (público), filtro opcional por ciudad sin tildes. `GET /terminals/{id}` también es público (404 `TERMINAL_NOT_FOUND`). |
 | POST/PUT/DELETE | `/terminals`, `/terminals/{id}` | CRUD de terminales (ADMIN). Body `{ciudad, nombre, direccion?, lat, lng}` (lat/lng dentro de Colombia; 400 `INVALID_TERMINAL`). Nombre repetido en la ciudad → 409 `TERMINAL_ALREADY_EXISTS`; borrar una terminal usada por una parada → 409 `TERMINAL_IN_USE`. La migración V8 siembra las terminales principales de las ciudades del seed. |
-| GET | `/trips/search/companies?origin=&destination=&date=YYYY-MM-DD` | Empresas con viajes disponibles para esa búsqueda (filtro de empresa). |
+| GET | `/trips/search/companies?origin=&destination=&date=YYYY-MM-DD` | Empresas con viajes disponibles para esa búsqueda (se mantiene por compatibilidad; el filtro de empresa debe usar `/trips/search/facets`). |
 | GET | `/trips/cities` | Ciudades disponibles. |
 | GET | `/trips/in-progress?origin=&destination=` | Viajes en ruta (público, US-039/US-047): para abrir el seguimiento del bus sin tiquete. Al menos uno de `origin`/`destination` (si no, 400 `INVALID_SEARCH`), sin distinguir tildes. Itinerarios no cancelados con `fechaSalida - 30 min <= ahora <= fechaLlegadaEstimada + 30 min` (`tripbus.catalog.in-progress-before`/`-after`, mismo criterio que la ventana de fleet), ordenados por salida, máximo 50. Devuelve `itineraryId`, `busId`, `empresa`, `origen`, `destino`, `fechaSalida`, `fechaLlegadaEstimada`; sin precio, asientos ni oferta, y sin cache. |
 | GET | `/itineraries/{id}` | Detalle con paradas (con `terminalId` si la parada es una terminal), hora programada y `servicios` del bus. |
@@ -205,6 +206,23 @@ Opcionales con valor por defecto: `SERVER_PORT` (18002), `DB_HOST` (localhost), 
 El seed queda encendido también en PROD: en el MVP no hay pantalla para crear rutas y el seed es
 idempotente (ver `application-prod.yml`).
 
+### Datos de demostración (seed)
+
+- **3 empresas ficticias** (Expreso Andino, Flota Cordillera, Transportes Caribe Sol) con 42 rutas entre las 7
+  ciudades del catálogo y 5 salidas diarias. Se conservan porque los usuarios demo dependen de ellas.
+- **48 empresas que operan en las terminales de Bogotá** (30 en la Terminal del Norte y 18 en la Terminal
+  Salitre), con NIT ficticio. Cada una tiene 2 a 4 rutas desde y hacia Bogotá coherentes con su zona (Norte:
+  Boyacá, Santander, Costa y Cundinamarca norte; Salitre: Tolima, Huila, Valle, Nariño, Caquetá, Meta, Eje
+  Cafetero, Antioquia y Costa) sobre la red de tramos del seed; si la ciudad real no está en el catálogo se usa la
+  más cercana (p. ej. Duitama → Tunja, Neiva → Girardot, Pasto → Cali). La parada de Bogotá apunta a la terminal
+  de la empresa (con sus coordenadas). 2 o 3 salidas diarias por ruta, a horas que ninguna otra empresa usa en la
+  misma ruta; precio = tarifa de la ruta en el seed ±5–20 % según la empresa, sin cambio en la mañana, +5 % en la
+  tarde y −10 % en la noche. En total 206 salidas diarias nuevas (el seed base tiene 210), para no cargar Seat
+  Inventory.
+- **Los nombres de las empresas son reales, pero los NIT, rutas, horarios y precios son de demostración** y no
+  corresponden a la operación real de ninguna empresa.
+- Los ids son deterministas (UUID v3 de una llave lógica): el seed sigue siendo idempotente.
+
 ## Reglas de precio (US-138, US-141)
 
 1. **Base del recorrido completo:** el precio de la oferta activa si hay; si no, `precioBase` del viaje.
@@ -215,6 +233,13 @@ idempotente (ver `application-prod.yml`).
    Si se cruzan varias, gana la de la ruta sobre la de toda la empresa y, entre iguales, la más reciente.
 4. **Tipo de pasajero:** − descuento del tipo (`ADULTO` 0 %), redondeado a 100.
 5. **Categoría del asiento:** + recargo en COP de la empresa (`ESTANDAR` sin recargo).
+
+**Precio "desde".** Cada resultado de `/trips/search` (y de `/trips/round-trip`) trae `precioDesde`: lo que paga un
+adulto en un asiento sin recargo, con los pasos 1 a 4 (tramo u oferta activa si no ha vencido, temporada del día de
+salida y descuento de `ADULTO`). Es exactamente el `total` de `GET /itineraries/{id}/price` para un `ADULTO` sin
+asiento (con `from`/`to` en un tramo), y es el que usan el orden por precio, `precioMin`/`precioMax`, el
+`precioMinimo` del calendario y el rango de las facetas: la fila de días, las tarjetas, los filtros y el desglose
+de pago siempre coinciden.
 
 Ejemplo: viaje Bogotá–Medellín de 540 min con precio base 95 000 y un pasajero que sube en Honda
 (parada a los 210 min) y baja en Medellín (540 min), es decir, un tramo de 330 min:
@@ -279,6 +304,9 @@ mvn -B verify      # unitarias + integración con PostgreSQL y Redis reales (Tes
   asientos, Seat Inventory caído y compensación), la cancelación corregida y el historial.
 - `MigracionSinCrucesIT`: PostgreSQL propio; aplica hasta V4, carga viajes cruzados como los del seed viejo
   y verifica que V5 los reparte en el bus alterno antes de crear la restricción.
+- `PreciosConsistentesIT`: igual (Testcontainers) con el seed; prueba que `precioDesde` es el total de un adulto en
+  `/itineraries/{id}/price` (temporada, oferta y tramos), que cada día del calendario coincide con `/trips/search`
+  con los mismos filtros, las facetas y las empresas de las terminales de Bogotá.
 
 Toda la plataforma: ver el README de **API-gateway**.
 
