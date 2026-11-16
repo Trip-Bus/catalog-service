@@ -48,9 +48,9 @@ class SearchCacheTest {
     void guardaYLeeLosResultados() throws Exception {
         List<TripSearchResult> resultados = List.of(resultado());
         cache.put("bogota", "medellin", FECHA, "AUTO", resultados);
-        verify(ops).set(eq("catalog:search:v2:bogota:medellin:2026-11-01:AUTO"), anyString(), eq(Duration.ofSeconds(45)));
+        verify(ops).set(eq("catalog:search:v3:bogota:medellin:2026-11-01:AUTO"), anyString(), eq(Duration.ofSeconds(45)));
 
-        when(ops.get("catalog:search:v2:bogota:medellin:2026-11-01:AUTO"))
+        when(ops.get("catalog:search:v3:bogota:medellin:2026-11-01:AUTO"))
                 .thenReturn(mapper.writeValueAsString(resultados));
         assertThat(cache.get("bogota", "medellin", FECHA, "AUTO")).contains(resultados);
         // Otro modo es otra entrada.
@@ -61,12 +61,12 @@ class SearchCacheTest {
     void guardaYLeeElCalendarioPor60Segundos() throws Exception {
         List<CalendarDay> dias = List.of(new CalendarDay(FECHA, new BigDecimal("95000"), 5, true),
                 new CalendarDay(FECHA.plusDays(1), null, 0, false));
-        cache.putCalendar("bogota", "medellin", FECHA, 2, dias);
-        verify(ops).set(eq("catalog:calendar:v1:bogota:medellin:2026-11-01:2"), anyString(), eq(Duration.ofSeconds(60)));
+        cache.putCalendar("bogota", "medellin", FECHA, 2, "AUTO:-:-:-", dias);
+        verify(ops).set(eq("catalog:calendar:v2:bogota:medellin:2026-11-01:2:AUTO:-:-:-"), anyString(), eq(Duration.ofSeconds(60)));
 
-        when(ops.get("catalog:calendar:v1:bogota:medellin:2026-11-01:2")).thenReturn(mapper.writeValueAsString(dias));
-        assertThat(cache.getCalendar("bogota", "medellin", FECHA, 2)).contains(dias);
-        assertThat(cache.getCalendar("bogota", "medellin", FECHA, 3)).isEmpty();
+        when(ops.get("catalog:calendar:v2:bogota:medellin:2026-11-01:2:AUTO:-:-:-")).thenReturn(mapper.writeValueAsString(dias));
+        assertThat(cache.getCalendar("bogota", "medellin", FECHA, 2, "AUTO:-:-:-")).contains(dias);
+        assertThat(cache.getCalendar("bogota", "medellin", FECHA, 2, "TODOS:-:-:-")).isEmpty();
     }
 
     @Test
@@ -80,8 +80,8 @@ class SearchCacheTest {
 
     @Test
     void invalidaTodasLasBusquedas() {
-        when(redis.keys("catalog:search:v2:*")).thenReturn(Set.of("a", "b"));
-        when(redis.keys("catalog:calendar:v1:*")).thenReturn(Set.of("c"));
+        when(redis.keys("catalog:search:v3:*")).thenReturn(Set.of("a", "b"));
+        when(redis.keys("catalog:calendar:v2:*")).thenReturn(Set.of("c"));
         cache.evictAll();
         verify(redis).delete(Set.of("a", "b"));
         verify(redis).delete(Set.of("c"));

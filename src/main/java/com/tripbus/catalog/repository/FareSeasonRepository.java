@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -24,4 +25,13 @@ public interface FareSeasonRepository extends JpaRepository<FareSeason, UUID> {
             """)
     List<FareSeason> vigentes(@Param("companyId") UUID companyId, @Param("routeId") UUID routeId,
                               @Param("fecha") LocalDate fecha);
+
+    /** Temporadas de esas empresas que se cruzan con [desde, hasta] (la búsqueda elige la de cada viaje en Java). */
+    @Query("""
+            select s from FareSeason s
+            where s.companyId in :companyIds
+              and s.desde <= :hasta and s.hasta >= :desde
+            """)
+    List<FareSeason> solapan(@Param("companyIds") Collection<UUID> companyIds, @Param("desde") LocalDate desde,
+                             @Param("hasta") LocalDate hasta);
 }

@@ -49,7 +49,8 @@ import java.util.UUID;
 /**
  * HT-01: carga idempotente de datos base. Todos los IDs son deterministas (UUID v3 a partir
  * de una llave lógica), así que ejecutar el seed N veces nunca duplica datos: solo agrega
- * los itinerarios de los días nuevos de la ventana [ayer, hoy + 21 días].
+ * los itinerarios de los días nuevos de la ventana [ayer, hoy + 21 días]. Siembra las 3 empresas ficticias de
+ * {@link SeedData} y las empresas de las terminales de Bogotá de {@link SeedEmpresasBogota}.
  */
 @Service
 public class SeedService {
@@ -100,77 +101,57 @@ public class SeedService {
         return UUID.nameUUIDFromBytes(("tripbus:" + logicalKey).getBytes(StandardCharsets.UTF_8));
     }
 
+    /**
+     * Una ruta a sembrar: sus horas de salida con su precio y la placa de cada bus, y la terminal de su parada de
+     * Bogotá (null en las rutas de las empresas ficticias).
+     */
+    private record PlanRuta(SeedData.RouteSeed ruta, UUID terminalBogota, List<LocalTime> salidas,
+                            List<BigDecimal> precios, List<String> placas) {
+    }
+
+    /** Lo que va dejando el seed: buses creados, itinerarios nuevos y cuántos ya existían. */
+    private static final class Avance {
+        private final List<Bus> creados = new ArrayList<>();
+        private final List<Itinerary> nuevos = new ArrayList<>();
+        private int existentes;
+    }
+
     @Transactional
     public SeedResult seed() {
         Map<String, Company> companies = new HashMap<>();
         for (SeedData.CompanySeed c : SeedData.EMPRESAS) {
-            UUID companyId = id("company:" + c.key());
-            Company company = companyRepository.findById(companyId)
-                    .orElseGet(() -> companyRepository.save(new Company(companyId, c.nombre(), c.nit())));
-            companies.put(c.key(), company);
-            companyTermsService.ensureInitial(companyId);
+            companies.put(c.key(), empresa(c.key(), c.nombre(), c.nit()));
+        }
+        for (SeedEmpresasBogota.Empresa e : SeedEmpresasBogota.EMPRESAS) {
+            companies.put(e.key(), empresa(e.key(), e.nombre(), e.nit()));
         }
 
-        List<Bus> creados = new ArrayList<>();
-        List<Itinerary> nuevos = new ArrayList<>();
-        int existentes = 0;
+        Avance avance = new Avance();
         LocalDate hoy = LocalDate.now(clock.withZone(CatalogTime.ZONE));
-
         for (int r = 0; r < SeedData.RUTAS.size(); r++) {
             SeedData.RouteSeed rs = SeedData.RUTAS.get(r);
-            Company company = companies.get(rs.companyKey());
-            UUID routeId = id("route:" + rs.key());
-            Route route = routeRepository.findById(routeId).orElseGet(() -> {
-                Route created = routeRepository.save(
-                        new Route(routeId, company, rs.origen(), rs.destino(), rs.duracionMinutos()));
-                for (int orden = 0; orden < rs.paradas().size(); orden++) {
-                    SeedData.StopSeed st = rs.paradas().get(orden);
-                    stopRepository.save(new Stop(id("stop:" + rs.key() + ":" + orden), routeId, orden + 1,
-                            st.nombre(), st.lat(), st.lng(), st.minutosDesdeSalida()));
-                }
-                return created;
-            });
-
-            // Un bus fijo por (ruta, horario). US-117: si la ruta (más el alistamiento) no cabe en 24 h, el bus
-            // no alcanza a volver a salir al día siguiente: los días impares van en un bus alterno (V5 movió
-            // a ese mismo bus los viajes que ya existían).
-            boolean conAlterno = SeedData.necesitaBusAlterno(rs, busTurnaround);
-            List<Bus> busesRuta = new ArrayList<>();
-            List<Bus> alternos = new ArrayList<>();
+            List<BigDecimal> precios = new ArrayList<>();
+            List<String> placas = new ArrayList<>();
             for (int slot = 0; slot < SeedData.SALIDAS.size(); slot++) {
-                UUID busId = id("bus:" + rs.key() + ":" + slot);
-                String placa = String.format("T%s%03d", rs.key().substring(0, 2).toUpperCase(), r * 10 + slot);
-                Bus bus = busDelSeed(busId, company, placa, rs.tipoBus(), creados);
-                busesRuta.add(bus);
-                alternos.add(conAlterno
-                        ? busDelSeed(busAlterno(busId), company, "U" + placa.substring(1), rs.tipoBus(), creados)
-                        : bus);
+                precios.add(precio(rs.precioBase(), SeedData.SALIDAS.get(slot)));
+                placas.add(String.format("T%s%03d", rs.key().substring(0, 2).toUpperCase(), r * 10 + slot));
             }
-
-            Set<UUID> candidatos = new HashSet<>();
-            Map<UUID, Itinerary> porCrear = new LinkedHashMap<>();
-            for (int d = -SeedData.DIAS_ATRAS; d <= SeedData.DIAS_ADELANTE; d++) {
-                LocalDate fecha = hoy.plusDays(d);
-                List<Bus> busesDelDia = SeedData.esDiaImpar(fecha) ? alternos : busesRuta;
-                for (int slot = 0; slot < SeedData.SALIDAS.size(); slot++) {
-                    LocalTime hora = SeedData.SALIDAS.get(slot);
-                    UUID itineraryId = id("itinerary:" + rs.key() + ":" + fecha + ":" + slot);
-                    candidatos.add(itineraryId);
-                    Instant salida = fecha.atTime(hora).atZone(CatalogTime.ZONE).toInstant();
-                    Instant llegada = salida.plusSeconds(rs.duracionMinutos() * 60L);
-                    porCrear.put(itineraryId, new Itinerary(itineraryId, route, busesDelDia.get(slot), salida, llegada,
-                            precio(rs.precioBase(), hora)));
-                }
-            }
-            Set<UUID> yaExisten = new HashSet<>();
-            itineraryRepository.findAllById(candidatos).forEach(i -> yaExisten.add(i.getId()));
-            existentes += yaExisten.size();
-            for (Map.Entry<UUID, Itinerary> e : porCrear.entrySet()) {
-                if (!yaExisten.contains(e.getKey())) {
-                    nuevos.add(e.getValue());
-                }
-            }
+            sembrar(new PlanRuta(rs, null, SeedData.SALIDAS, precios, placas), companies.get(rs.companyKey()), hoy,
+                    avance);
         }
+        for (SeedEmpresasBogota.Ruta ruta : SeedEmpresasBogota.RUTAS) {
+            List<BigDecimal> precios = ruta.salidas().stream().map(ruta::precio).toList();
+            List<String> placas = new ArrayList<>();
+            for (int slot = 0; slot < ruta.salidas().size(); slot++) {
+                placas.add(ruta.placa(slot));
+            }
+            sembrar(new PlanRuta(ruta.ruta(), ruta.terminal(), ruta.salidas(), precios, placas),
+                    companies.get(ruta.ruta().companyKey()), hoy, avance);
+        }
+
+        List<Itinerary> nuevos = avance.nuevos;
+        int existentes = avance.existentes;
+        List<Bus> creados = avance.creados;
 
         itineraryRepository.saveAll(nuevos);
         itineraryPublisher.publishAfterCommit(nuevos);
@@ -178,7 +159,73 @@ public class SeedService {
             searchCache.evictAll();
         }
         log.info("Seed ejecutado: {} itinerarios nuevos, {} ya existían", nuevos.size(), existentes);
-        return new SeedResult(companies.size(), SeedData.RUTAS.size(), creados.size(), nuevos.size(), existentes);
+        return new SeedResult(companies.size(), SeedData.RUTAS.size() + SeedEmpresasBogota.RUTAS.size(),
+                creados.size(), nuevos.size(), existentes);
+    }
+
+    private Company empresa(String key, String nombre, String nit) {
+        UUID companyId = id("company:" + key);
+        Company company = companyRepository.findById(companyId)
+                .orElseGet(() -> companyRepository.save(new Company(companyId, nombre, nit)));
+        companyTermsService.ensureInitial(companyId);
+        return company;
+    }
+
+    /** La ruta (con sus paradas), un bus por horario y los itinerarios de la ventana que aún no existen. */
+    private void sembrar(PlanRuta plan, Company company, LocalDate hoy, Avance avance) {
+        SeedData.RouteSeed rs = plan.ruta();
+        UUID routeId = id("route:" + rs.key());
+        Route route = routeRepository.findById(routeId).orElseGet(() -> {
+            Route created = routeRepository.save(
+                    new Route(routeId, company, rs.origen(), rs.destino(), rs.duracionMinutos()));
+            for (int orden = 0; orden < rs.paradas().size(); orden++) {
+                SeedData.StopSeed st = rs.paradas().get(orden);
+                UUID terminal = SeedEmpresasBogota.BOGOTA.equals(st.nombre()) ? plan.terminalBogota() : null;
+                stopRepository.save(new Stop(id("stop:" + rs.key() + ":" + orden), routeId, orden + 1,
+                        st.nombre(), st.lat(), st.lng(), st.minutosDesdeSalida(), terminal));
+            }
+            return created;
+        });
+
+        // Un bus fijo por (ruta, horario). US-117: si la ruta (más el alistamiento) no cabe en 24 h, el bus
+        // no alcanza a volver a salir al día siguiente: los días impares van en un bus alterno (V5 movió
+        // a ese mismo bus los viajes que ya existían).
+        boolean conAlterno = SeedData.necesitaBusAlterno(rs, busTurnaround);
+        List<Bus> busesRuta = new ArrayList<>();
+        List<Bus> alternos = new ArrayList<>();
+        for (int slot = 0; slot < plan.salidas().size(); slot++) {
+            UUID busId = id("bus:" + rs.key() + ":" + slot);
+            String placa = plan.placas().get(slot);
+            Bus bus = busDelSeed(busId, company, placa, rs.tipoBus(), avance.creados);
+            busesRuta.add(bus);
+            alternos.add(conAlterno
+                    ? busDelSeed(busAlterno(busId), company, "U" + placa.substring(1), rs.tipoBus(), avance.creados)
+                    : bus);
+        }
+
+        Set<UUID> candidatos = new HashSet<>();
+        Map<UUID, Itinerary> porCrear = new LinkedHashMap<>();
+        for (int d = -SeedData.DIAS_ATRAS; d <= SeedData.DIAS_ADELANTE; d++) {
+            LocalDate fecha = hoy.plusDays(d);
+            List<Bus> busesDelDia = SeedData.esDiaImpar(fecha) ? alternos : busesRuta;
+            for (int slot = 0; slot < plan.salidas().size(); slot++) {
+                LocalTime hora = plan.salidas().get(slot);
+                UUID itineraryId = id("itinerary:" + rs.key() + ":" + fecha + ":" + slot);
+                candidatos.add(itineraryId);
+                Instant salida = fecha.atTime(hora).atZone(CatalogTime.ZONE).toInstant();
+                Instant llegada = salida.plusSeconds(rs.duracionMinutos() * 60L);
+                porCrear.put(itineraryId, new Itinerary(itineraryId, route, busesDelDia.get(slot), salida, llegada,
+                        plan.precios().get(slot)));
+            }
+        }
+        Set<UUID> yaExisten = new HashSet<>();
+        itineraryRepository.findAllById(candidatos).forEach(i -> yaExisten.add(i.getId()));
+        avance.existentes += yaExisten.size();
+        for (Map.Entry<UUID, Itinerary> e : porCrear.entrySet()) {
+            if (!yaExisten.contains(e.getKey())) {
+                avance.nuevos.add(e.getValue());
+            }
+        }
     }
 
     /** Id del bus que cubre los días impares de una ruta larga (la migración V5 calcula el mismo). */

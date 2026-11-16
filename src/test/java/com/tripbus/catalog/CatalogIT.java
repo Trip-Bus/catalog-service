@@ -102,16 +102,18 @@ class CatalogIT {
         seedService.seed();
         SeedResult segunda = seedService.seed();
         assertThat(segunda.itinerariosNuevos()).isZero();
-        // 7 ciudades conectadas entre sí en los dos sentidos = 42 rutas, 5 salidas diarias, 23 días (ayer a +21).
-        assertThat(segunda.rutas()).isEqualTo(7 * 6);
-        assertThat(segunda.itinerariosExistentes()).isEqualTo(7 * 6 * 5 * 23);
+        // 7 ciudades conectadas entre sí en los dos sentidos = 42 rutas con 5 salidas diarias, más las 100 rutas de las
+        // empresas de las terminales de Bogotá (206 salidas diarias), 23 días (ayer a +21).
+        assertThat(segunda.rutas()).isEqualTo(7 * 6 + 100);
+        assertThat(segunda.itinerariosExistentes()).isEqualTo((7 * 6 * 5 + 206) * 23);
     }
 
     @Test
     void buscarDevuelveViajesOrdenadosPorSalidaSinDistinguirTildes() throws Exception {
         LocalDate manana = LocalDate.now(CatalogTime.ZONE).plusDays(1);
         String body = mockMvc.perform(get("/trips/search")
-                        .param("origin", "bogota").param("destination", "MEDELLÍN").param("date", manana.toString()))
+                        .param("origin", "bogota").param("destination", "MEDELLÍN").param("date", manana.toString())
+                        .param("companyId", SeedService.id("company:andino").toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(5))
                 .andExpect(jsonPath("$[0].empresa").value("Expreso Andino"))
@@ -168,7 +170,8 @@ class CatalogIT {
         assertThat(Integer.parseInt(response.getHeader("X-Total-Count"))).isGreaterThan(0);
         mockMvc.perform(get("/trips/search/companies").param("origin", "Bogotá").param("destination", "Medellín")
                         .param("date", manana.toString()))
-                .andExpect(status().isOk()).andExpect(jsonPath("$[0].id").value(company.toString()));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].id", org.hamcrest.Matchers.hasItem(company.toString())));
     }
 
     @Test
@@ -290,7 +293,9 @@ class CatalogIT {
         assertThat(primero.has("ofertaActiva")).isFalse();
 
         // "bogota" sin tilde, solo origen: aparece el viaje en curso y nunca los que están fuera de la ventana.
-        String porOrigen = mockMvc.perform(get("/trips/in-progress").param("origin", "bogota"))
+        // (con destino: desde Bogotá salen muchas empresas del seed y la lista se corta en 50)
+        String porOrigen = mockMvc.perform(get("/trips/in-progress").param("origin", "bogota")
+                        .param("destination", "tunja en ruta"))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
         List<String> ids = new ArrayList<>();

@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
@@ -32,6 +33,23 @@ public interface StopRepository extends JpaRepository<Stop, UUID> {
               and o.orden < d.orden
             """)
     List<TramoParada> tramos(@Param("origen") String origen, @Param("destino") String destino);
+
+    /**
+     * Terminales de las paradas en la ciudad (normalizada) de las rutas de esas empresas, sin contar la última
+     * parada de cada ruta (ahí el bus llega, no sale). Ordenadas por empresa y nombre de la terminal.
+     */
+    @Query("""
+            select new com.tripbus.catalog.repository.TerminalDeSalida(r.company.id, t.nombre)
+            from Stop s, Route r, Terminal t
+            where r.id = s.routeId
+              and t.id = s.terminalId
+              and s.nombreNorm = :ciudad
+              and s.minutosDesdeSalida < r.duracionMinutos
+              and r.company.id in :companyIds
+            order by r.company.id, t.nombre
+            """)
+    List<TerminalDeSalida> terminalesDeSalida(@Param("ciudad") String ciudad,
+                                              @Param("companyIds") Collection<UUID> companyIds);
 
     /** Borrado inmediato (no al final del flush) para poder insertar las nuevas paradas con los mismos órdenes. */
     @Modifying(flushAutomatically = true)

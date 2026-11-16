@@ -26,47 +26,57 @@ import java.util.stream.Collectors;
 /**
  * Viajes entre dos ciudades (ya normalizadas) cuya salida del pasajero cae en [desde, hasta), ordenados por esa
  * salida. Los directos salen de la ruta (origen y destino de la ruta); US-138: los tramos, de las paradas
- * intermedias de otras rutas, con el precio del tramo (sin temporada ni tipo de pasajero, ver {@link PricingRules}).
- * Lo usan la búsqueda (US-007), el calendario (US-136) y la ida y vuelta (US-137).
+ * intermedias de otras rutas, con el precio del tramo (ver {@link PricingRules}). Cada resultado lleva además la
+ * temporada de su día de salida y el descuento de ADULTO de su empresa ({@link TarifaAdulto}), para su precio
+ * "desde". Lo usan la búsqueda (US-007), el calendario (US-136), las facetas y la ida y vuelta (US-137).
  */
 @Component
 public class TripFinder {
+
+    /** Un viaje encontrado y su resultado (directo o tramo), antes de agregarle la tarifa. */
+    private record Candidato(Itinerary viaje, TripSearchResult resultado) {
+    }
 
     private final ItineraryRepository itineraryRepository;
     private final RouteRepository routeRepository;
     private final StopRepository stopRepository;
     private final SegmentPriceRepository segmentPriceRepository;
+    private final TarifaAdulto tarifaAdulto;
     private final Clock clock;
     private final int minPorcentaje;
 
     public TripFinder(ItineraryRepository itineraryRepository, RouteRepository routeRepository,
-                      StopRepository stopRepository, SegmentPriceRepository segmentPriceRepository, Clock clock,
+                      StopRepository stopRepository, SegmentPriceRepository segmentPriceRepository,
+                      TarifaAdulto tarifaAdulto, Clock clock,
                       @Value("${tripbus.catalog.min-segment-percent:30}") int minPorcentaje) {
         this.itineraryRepository = itineraryRepository;
         this.routeRepository = routeRepository;
         this.stopRepository = stopRepository;
         this.segmentPriceRepository = segmentPriceRepository;
+        this.tarifaAdulto = tarifaAdulto;
         this.clock = clock;
         this.minPorcentaje = minPorcentaje;
     }
 
     public List<TripSearchResult> buscar(String origen, String destino, Instant desde, Instant hasta, SearchMode modo) {
         Instant now = clock.instant();
-        List<TripSearchResult> resultados = new ArrayList<>(itineraryRepository.search(origen, destino, desde, hasta)
-                .stream().map(i -> toResult(i, now)).toList());
+        List<Candidato> candidatos = new ArrayList<>(itineraryRepository.search(origen, destino, desde, hasta)
+                .stream().map(i -> new Candidato(i, toResult(i, now))).toList());
         boolean conTramos = switch (modo) {
             case TODOS -> true;
             case DIRECTOS -> false;
             case AUTO -> !routeRepository.existsByOrigenNormAndDestinoNorm(origen, destino);
         };
         if (conTramos) {
-            resultados.addAll(tramos(origen, destino, desde, hasta, now));
-            resultados.sort(Comparator.comparing(TripSearchResult::salidaEfectiva));
+            candidatos.addAll(tramos(origen, destino, desde, hasta, now));
+            candidatos.sort(Comparator.comparing(c -> c.resultado().salidaEfectiva()));
         }
-        return resultados;
+        TarifaAdulto.Factores factores = tarifaAdulto.cargar(candidatos.stream().map(Candidato::viaje).toList());
+        return candidatos.stream().map(c -> c.resultado().conTarifa(factores.multiplicador(c.viaje()),
+                factores.descuento(c.viaje().getRoute().getCompany().getId()))).toList();
     }
 
-    private List<TripSearchResult> tramos(String origen, String destino, Instant desde, Instant hasta, Instant now) {
+    private List<Candidato> tramos(String origen, String destino, Instant desde, Instant hasta, Instant now) {
         Map<UUID, List<TramoParada>> porRuta = stopRepository.tramos(origen, destino).stream()
                 .filter(t -> !t.esCompleto())
                 .collect(Collectors.groupingBy(TramoParada::routeId));
@@ -78,28 +88,31 @@ public class TripFinder {
         Map<String, BigDecimal> exactos = segmentPriceRepository.findByRouteIdIn(porRuta.keySet()).stream()
                 .collect(Collectors.toMap(p -> clave(p.getRouteId(), p.getDesdeOrden(), p.getHastaOrden()),
                         SegmentPrice::getPrecio));
-        List<TripSearchResult> resultados = new ArrayList<>();
+        List<Candidato> resultados = new ArrayList<>();
         for (Itinerary i : itineraryRepository.searchByRoutes(porRuta.keySet(),
                 desde.minus(Duration.ofMinutes(maxMinutos)), hasta)) {
             for (TramoParada t : porRuta.get(i.getRoute().getId())) {
                 Instant salida = i.getFechaSalida().plus(Duration.ofMinutes(t.minutosDesde()));
                 if (!salida.isBefore(desde) && salida.isBefore(hasta)) {
-                    resultados.add(tramo(i, t, salida, exactos, now));
+                    resultados.add(new Candidato(i, tramo(i, t, salida, exactos, now)));
                 }
             }
         }
         return resultados;
     }
 
+    /** Como PricingService: con oferta activa el tramo sale de la oferta (sin precio exacto); sin ella, del base. */
     private TripSearchResult tramo(Itinerary i, TramoParada t, Instant salida, Map<String, BigDecimal> exactos,
                                    Instant now) {
-        boolean conOferta = i.tieneOfertaActiva(now);
-        BigDecimal base = conOferta ? i.getPrecioOferta() : i.getPrecioBase();
-        BigDecimal exacto = conOferta ? null : exactos.get(clave(t.routeId(), t.fromOrden(), t.toOrden()));
-        BigDecimal precio = PricingRules.tramo(base, t.minutosDesde(), t.minutosHasta(), t.duracionRuta(), exacto,
-                minPorcentaje);
+        BigDecimal exacto = exactos.get(clave(t.routeId(), t.fromOrden(), t.toOrden()));
+        BigDecimal sinOferta = PricingRules.tramo(i.getPrecioBase(), t.minutosDesde(), t.minutosHasta(),
+                t.duracionRuta(), exacto, minPorcentaje);
+        BigDecimal precio = i.tieneOfertaActiva(now)
+                ? PricingRules.tramo(i.getPrecioOferta(), t.minutosDesde(), t.minutosHasta(), t.duracionRuta(), null,
+                        minPorcentaje)
+                : sinOferta;
         return toResult(i, now).conTramo(t.fromOrden(), t.toOrden(), salida,
-                i.getFechaSalida().plus(Duration.ofMinutes(t.minutosHasta())), precio);
+                i.getFechaSalida().plus(Duration.ofMinutes(t.minutosHasta())), precio, sinOferta);
     }
 
     static String clave(UUID routeId, int desde, int hasta) {
@@ -130,6 +143,6 @@ public class TripFinder {
                 false,
                 i.getRoute().getCompany().getId(),
                 i.getBus().getServicios().stream().map(Enum::name).toList(),
-                null, null, null, null, null);
+                null, null, null, null, null, null, null, null);
     }
 }

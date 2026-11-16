@@ -21,14 +21,15 @@ import java.util.Optional;
  * Si Redis falla, la búsqueda va directo a PostgreSQL.
  *
  * <p>US-138: la llave incluye el modo (ver {@link SearchMode}); v2 porque los resultados ganaron servicios y
- * tramo. US-136: el calendario se guarda aparte, 60 s, ya con el cupo (solo si Seat Inventory respondió).
+ * tramo; v3 porque ganaron la tarifa del precio "desde". US-136: el calendario se guarda aparte, 60 s, ya con el
+ * cupo (solo si Seat Inventory respondió); su llave incluye el modo y los filtros (empresa, franja y tipo de bus).
  */
 @Component
 public class SearchCache {
 
     private static final Logger log = LoggerFactory.getLogger(SearchCache.class);
-    private static final String PREFIX = "catalog:search:v2:";
-    private static final String PREFIX_CALENDARIO = "catalog:calendar:v1:";
+    private static final String PREFIX = "catalog:search:v3:";
+    private static final String PREFIX_CALENDARIO = "catalog:calendar:v2:";
     static final Duration TTL_CALENDARIO = Duration.ofSeconds(60);
 
     private final StringRedisTemplate redis;
@@ -53,13 +54,15 @@ public class SearchCache {
         guardar(key(origen, destino, fecha, modo), results, ttl);
     }
 
-    public Optional<List<CalendarDay>> getCalendar(String origen, String destino, LocalDate desde, int dias) {
-        return leer(keyCalendario(origen, destino, desde, dias), new TypeReference<>() {
+    public Optional<List<CalendarDay>> getCalendar(String origen, String destino, LocalDate desde, int dias,
+                                                   String filtros) {
+        return leer(keyCalendario(origen, destino, desde, dias, filtros), new TypeReference<>() {
         });
     }
 
-    public void putCalendar(String origen, String destino, LocalDate desde, int dias, List<CalendarDay> calendario) {
-        guardar(keyCalendario(origen, destino, desde, dias), calendario, TTL_CALENDARIO);
+    public void putCalendar(String origen, String destino, LocalDate desde, int dias, String filtros,
+                            List<CalendarDay> calendario) {
+        guardar(keyCalendario(origen, destino, desde, dias, filtros), calendario, TTL_CALENDARIO);
     }
 
     /** Invalida todas las búsquedas y calendarios cacheados (cuando cambia una oferta, un viaje o un precio). */
@@ -101,7 +104,7 @@ public class SearchCache {
         return PREFIX + origen + ":" + destino + ":" + fecha + ":" + modo;
     }
 
-    private static String keyCalendario(String origen, String destino, LocalDate desde, int dias) {
-        return PREFIX_CALENDARIO + origen + ":" + destino + ":" + desde + ":" + dias;
+    private static String keyCalendario(String origen, String destino, LocalDate desde, int dias, String filtros) {
+        return PREFIX_CALENDARIO + origen + ":" + destino + ":" + desde + ":" + dias + ":" + filtros;
     }
 }
